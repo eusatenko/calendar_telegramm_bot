@@ -44,6 +44,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if err = os.Chmod(path, 0600); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("защита файла БД: %w", err)
+	}
 	return s, nil
 }
 func (s *Store) Close() error { return s.db.Close() }

@@ -82,7 +82,7 @@ docker compose logs -f --tail=100
 ```bash
 git clone git@github.com:eusatenko/calendar_telegramm_bot.git /opt/family-calendar-bot
 cd /opt/family-calendar-bot
-install -d -m 700 data
+install -d -m 700 -o 65532 -g 65532 data
 # создать .env вручную; существующий .env не перезаписывать
 docker compose build
 docker compose up -d

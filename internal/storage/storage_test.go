@@ -2,6 +2,7 @@ package storage
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -101,5 +102,21 @@ func TestExpiredInvite(t *testing.T) {
 	s.now = func() time.Time { return now.Add(2 * time.Minute) }
 	if e = s.RedeemInvite(token, 2, "", ""); !errors.Is(e, ErrInviteInvalid) {
 		t.Fatalf("%v", e)
+	}
+}
+
+func TestDatabasePermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bot.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("mode=%o", info.Mode().Perm())
 	}
 }
