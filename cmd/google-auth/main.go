@@ -32,9 +32,13 @@ func main() {
 	}
 	state := base64.RawURLEncoding.EncodeToString(stateBytes)
 
-	listener, err := net.Listen("tcp", "127.0.0.1:53682")
+	listenAddress := os.Getenv("GOOGLE_OAUTH_LISTEN_ADDRESS")
+	if listenAddress == "" {
+		listenAddress = "127.0.0.1:53682"
+	}
+	listener, err := net.Listen("tcp", listenAddress)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "cannot listen on 127.0.0.1:53682:", err)
+		fmt.Fprintln(os.Stderr, "cannot listen for OAuth callback:", err)
 		os.Exit(1)
 	}
 	defer listener.Close()
