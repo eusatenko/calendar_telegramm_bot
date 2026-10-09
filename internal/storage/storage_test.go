@@ -142,3 +142,18 @@ func TestLinkAndLoadEventCopies(t *testing.T) {
 		t.Fatal("non-admin linked events")
 	}
 }
+
+func TestLinkAndLoadSingleEvent(t *testing.T) {
+	s := openTest(t)
+	s.BootstrapAdmin(1)
+	if err := s.LinkEventCopies(1, []EventCopy{{CalendarKey: "anya", ICalUID: "uid-a"}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.EventGroup("anya", "uid-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].CalendarKey != "anya" || got[0].ICalUID != "uid-a" {
+		t.Fatalf("copies=%+v", got)
+	}
+}

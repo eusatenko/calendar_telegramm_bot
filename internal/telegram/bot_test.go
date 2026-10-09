@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/eusatenko/calendar_telegramm_bot/internal/calendar"
+	"github.com/eusatenko/calendar_telegramm_bot/internal/schedule"
 	"github.com/eusatenko/calendar_telegramm_bot/internal/storage"
 )
 
@@ -112,6 +113,13 @@ func (s fixedSource) Events(time.Time, time.Time) ([]calendar.Event, bool, error
 	return s.events, false, nil
 }
 
+type recordingEditor struct{ calls int }
+
+func (e *recordingEditor) Apply(context.Context, schedule.Request) ([]schedule.CopyResult, error) {
+	e.calls++
+	return []schedule.CopyResult{{Key: "anya", Name: "Аня"}}, nil
+}
+
 func TestFindMatchingCopiesUsesExactTitleAndInterval(t *testing.T) {
 	bot, _, _ := botFixture(t)
 	start := time.Date(2026, 10, 12, 18, 0, 0, 0, time.UTC)
@@ -170,6 +178,37 @@ func TestFindMatchingCopiesRejectsAmbiguousInterval(t *testing.T) {
 	_, err := bot.findMatchingCopies(editSession{personKey: "anya", event: selected})
 	if !errors.Is(err, errAmbiguousCopyMatch) {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestConfirmLinksSingleEventAndAppliesEdit(t *testing.T) {
+	bot, store, _ := botFixture(t)
+	if err := store.BootstrapAdmin(1); err != nil {
+		t.Fatal(err)
+	}
+	editor := &recordingEditor{}
+	bot.EnableScheduleEditing(editor)
+	title := "Новое название"
+	token := "test-token"
+	bot.editSessions[token] = editSession{
+		expires:     time.Now().Add(time.Minute),
+		actor:       1,
+		personKey:   "anya",
+		candidates:  []storage.EventCopy{{CalendarKey: "anya", ICalUID: "uid-a"}},
+		targetsText: "• Аня (только выбранное событие)",
+		needsLink:   true,
+		pending:     &schedule.Request{Actor: 1, SourceKey: "anya", SourceICalUID: "uid-a", Summary: &title},
+	}
+	q := CallbackQuery{ID: "q", From: User{ID: 1}, Message: Message{MessageID: 7, Chat: Chat{ID: 1}}}
+	if err := bot.scheduleEdit(context.Background(), q, []string{"edit", "confirm", token}); err != nil {
+		t.Fatal(err)
+	}
+	linked, err := store.EventGroup("anya", "uid-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(linked) != 1 || editor.calls != 1 {
+		t.Fatalf("linked=%+v editor_calls=%d", linked, editor.calls)
 	}
 }
 

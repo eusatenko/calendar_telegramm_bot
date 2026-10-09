@@ -60,18 +60,6 @@ func (b *Bot) scheduleEdit(ctx context.Context, q CallbackQuery, parts []string)
 			return b.invalid(ctx, q)
 		}
 		return b.editEventCard(ctx, q, parts[2])
-	case "link":
-		if len(parts) != 3 {
-			return b.invalid(ctx, q)
-		}
-		session, ok := b.editSession(q.From.ID, parts[2])
-		if !ok || len(session.candidates) < 2 {
-			return b.edit(ctx, q, "Сеанс устарел. Выберите событие заново.", editBackMenu())
-		}
-		if err := b.store.LinkEventCopies(q.From.ID, session.candidates); err != nil {
-			return err
-		}
-		return b.showEditActions(ctx, q, parts[2], session)
 	case "field":
 		if len(parts) != 4 || (parts[3] != "title" && parts[3] != "time") {
 			return b.invalid(ctx, q)
@@ -104,6 +92,13 @@ func (b *Bot) scheduleEdit(ctx context.Context, q CallbackQuery, parts []string)
 		session, ok := b.editSession(q.From.ID, parts[2])
 		if !ok || session.pending == nil {
 			return b.edit(ctx, q, "Сеанс устарел. Выберите событие заново.", editBackMenu())
+		}
+		if session.needsLink {
+			if err := b.store.LinkEventCopies(q.From.ID, session.candidates); err != nil {
+				return err
+			}
+			session.needsLink = false
+			b.saveEditSession(parts[2], session)
 		}
 		results, err := b.editor.Apply(ctx, *session.pending)
 		if err != nil {
@@ -166,6 +161,9 @@ func (b *Bot) editEventCard(ctx context.Context, q CallbackQuery, token string) 
 		return err
 	}
 	if len(linked) > 0 {
+		session.candidates = linked
+		session.targetsText = b.linkedTargetNames(linked)
+		b.saveEditSession(token, session)
 		return b.showEditActions(ctx, q, token, session)
 	}
 	match, err := b.findMatchingCopies(session)
@@ -176,21 +174,10 @@ func (b *Bot) editEventCard(ctx context.Context, q CallbackQuery, token string) 
 		return err
 	}
 	session.candidates = match.copies
+	session.needsLink = true
+	session.targetsText = b.matchTargetsText(match)
 	b.saveEditSession(token, session)
-	if len(match.copies) < 2 {
-		return b.edit(ctx, q, "Связанные копии не найдены. В остальных календарях нет события с таким же временем.", editBackMenu())
-	}
-	lines := make([]string, 0, len(match.copies))
-	for i, candidate := range match.copies {
-		lines = append(lines, "• "+b.people[candidate.CalendarKey].Name+": "+match.events[i].Summary)
-	}
-	matchDescription := "Найдены одинаковые копии:"
-	if !match.exactTitle {
-		matchDescription = "Найдены события с тем же временем, но разными названиями:"
-	}
-	text := eventDescription(session.event, b.loc) + "\n\n" + matchDescription + "\n" + strings.Join(lines, "\n") + "\n\nСвяжите их, только если это действительно копии одного события."
-	markup := Markup{InlineKeyboard: [][]Button{{{Text: "Связать эти события", CallbackData: "edit:link:" + token}}, {{Text: "Отмена", CallbackData: "edit:menu"}}}}
-	return b.edit(ctx, q, text, markup)
+	return b.showEditActions(ctx, q, token, session)
 }
 
 func (b *Bot) showEditActions(ctx context.Context, q CallbackQuery, token string, session editSession) error {
@@ -203,7 +190,8 @@ func (b *Bot) showEditActions(ctx context.Context, q CallbackQuery, token string
 		[]Button{{Text: "Назад", CallbackData: "edit:menu"}},
 	)
 	markup := Markup{InlineKeyboard: rows}
-	return b.edit(ctx, q, eventDescription(session.event, b.loc)+"\n\nЧто изменить?", markup)
+	text := eventDescription(session.event, b.loc) + "\n\nБудет применено к:\n" + session.targetsText + "\n\nЧто изменить?"
+	return b.edit(ctx, q, text, markup)
 }
 
 func (b *Bot) promptEditInput(ctx context.Context, q CallbackQuery, token, field string, scope googleapi.Scope) error {
@@ -254,6 +242,7 @@ func (b *Bot) handleEditInput(ctx context.Context, message Message, state inputS
 	} else {
 		preview += "\nОбласть: только это событие"
 	}
+	preview += "\nПрименить к:\n" + session.targetsText
 	markup := Markup{InlineKeyboard: [][]Button{{{Text: "Подтвердить", CallbackData: "edit:confirm:" + state.token}}, {{Text: "Отмена", CallbackData: "edit:event:" + state.token}}}}
 	return b.client.Send(ctx, message.Chat.ID, preview, markup)
 }
@@ -315,6 +304,34 @@ func (b *Bot) findMatchingCopies(session editSession) (copyMatch, error) {
 		return exact, nil
 	}
 	return byInterval, nil
+}
+
+func (b *Bot) matchTargetsText(match copyMatch) string {
+	lines := make([]string, 0, len(match.copies))
+	for i, candidate := range match.copies {
+		lines = append(lines, "• "+b.people[candidate.CalendarKey].Name+": "+match.events[i].Summary)
+	}
+	if len(lines) == 1 {
+		lines[0] += " (только выбранное событие)"
+	} else if !match.exactTitle {
+		lines = append(lines, "Названия различаются — проверьте список перед подтверждением.")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (b *Bot) linkedTargetNames(copies []storage.EventCopy) string {
+	lines := make([]string, 0, len(copies))
+	for _, copy := range copies {
+		name := copy.CalendarKey
+		if person, ok := b.people[copy.CalendarKey]; ok {
+			name = person.Name
+		}
+		lines = append(lines, "• "+name)
+	}
+	if len(lines) == 1 {
+		lines[0] += " (только выбранное событие)"
+	}
+	return strings.Join(lines, "\n")
 }
 
 func sameCopy(a, b calendar.Event) bool {

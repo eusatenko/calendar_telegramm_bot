@@ -110,8 +110,8 @@ ORDER BY linked.calendar_key`, calendarKey, iCalUID)
 // LinkEventCopies creates one logical event group. A physical event can belong
 // to only one group and a group can contain at most one copy per calendar.
 func (s *Store) LinkEventCopies(actor int64, copies []EventCopy) error {
-	if len(copies) < 2 {
-		return errors.New("для связи нужно минимум две копии")
+	if len(copies) < 1 {
+		return errors.New("список событий пуст")
 	}
 	tx, err := s.db.Begin()
 	if err != nil {

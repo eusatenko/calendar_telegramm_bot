@@ -27,12 +27,14 @@ type inputState struct {
 	scope       googleapi.Scope
 }
 type editSession struct {
-	expires    time.Time
-	actor      int64
-	personKey  string
-	event      calendar.Event
-	candidates []storage.EventCopy
-	pending    *schedule.Request
+	expires     time.Time
+	actor       int64
+	personKey   string
+	event       calendar.Event
+	candidates  []storage.EventCopy
+	targetsText string
+	needsLink   bool
+	pending     *schedule.Request
 }
 type ScheduleEditor interface {
 	Apply(context.Context, schedule.Request) ([]schedule.CopyResult, error)
