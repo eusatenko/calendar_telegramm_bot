@@ -48,7 +48,7 @@ func TestCombinedMergesMatchingEventsAndOmitsConsumedSection(t *testing.T) {
 		{Name: "Саша", Events: []calendar.Event{event("Саша — Бассейн", 9, 0, 45), event("Саша — Современный", 13, 0, 60), event("Саша — Репертуар", 14, 30, 60)}},
 		{Name: "Настя", Events: []calendar.Event{event("Настя — спираль", 10, 0, 60)}},
 	})
-	want := "Завтра — расписание всех\n\n09:00–09:45 Аня, Лёша, Саша — Бассейн\n\nАня\n11:50–12:50 Аня — Современный\n13:20–14:20 Аня — Репертуар\n\nЛёша\n13:00–14:00 Лёша, Саша — Современный\n14:30–15:30 Лёша, Саша — Репертуар\n\nНастя\n10:00–11:00 Настя — спираль"
+	want := "Завтра — расписание всех\n\n09:00–09:45 Аня, Лёша, Саша — Бассейн\n\nАня\n11:50–12:50 Аня — Современный\n13:20–14:20 Аня — Репертуар\n\nЛёша, Саша\n13:00–14:00 Лёша, Саша — Современный\n14:30–15:30 Лёша, Саша — Репертуар\n\nНастя\n10:00–11:00 Настя — спираль"
 	if got != want {
 		t.Fatalf("got:\n%s\n\nwant:\n%s", got, want)
 	}
@@ -69,6 +69,18 @@ func TestCombinedKeepsEmptyCalendars(t *testing.T) {
 	d := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
 	got := Combined("Расписание", d, []PersonEvents{{Name: "Аня"}})
 	if !strings.Contains(got, "Аня\nНет занятий") {
+		t.Fatal(got)
+	}
+}
+
+func TestCombinedKeepsPersonalHeaderForMixedSection(t *testing.T) {
+	d := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
+	sharedStart := d.Add(10 * time.Hour)
+	got := Combined("Расписание", d, []PersonEvents{
+		{Name: "Лёша", Events: []calendar.Event{{Summary: "Лёша — Танцы", Start: sharedStart, End: sharedStart.Add(time.Hour)}, {Summary: "Лёша — Шахматы", Start: d.Add(12 * time.Hour), End: d.Add(13 * time.Hour)}}},
+		{Name: "Саша", Events: []calendar.Event{{Summary: "Саша — Танцы", Start: sharedStart, End: sharedStart.Add(time.Hour)}}},
+	})
+	if strings.Contains(got, "\n\nЛёша, Саша\n") || !strings.Contains(got, "\n\nЛёша\n") {
 		t.Fatal(got)
 	}
 }

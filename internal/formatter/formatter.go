@@ -55,7 +55,7 @@ func Combined(title string, start time.Time, people []PersonEvents) string {
 		if len(sectionGroups) == 0 && eventCounts[personIndex] > 0 && !p.Stale && !p.Error {
 			continue
 		}
-		b.WriteString("\n\n" + p.Name)
+		b.WriteString("\n\n" + combinedSectionName(p.Name, sectionGroups))
 		if len(sectionGroups) == 0 && eventCounts[personIndex] == 0 {
 			b.WriteString("\nНет занятий")
 		} else {
@@ -166,6 +166,31 @@ func combinedLine(day time.Time, group combinedGroup) string {
 		return "Весь день — " + title
 	}
 	return fmt.Sprintf("%s–%s %s", event.Start.In(day.Location()).Format("15:04"), event.End.In(day.Location()).Format("15:04"), title)
+}
+
+func combinedSectionName(defaultName string, groups []combinedGroup) string {
+	if len(groups) == 0 || len(groups[0].items) < 2 {
+		return defaultName
+	}
+	want := combinedParticipantKey(groups[0])
+	for _, group := range groups[1:] {
+		if len(group.items) < 2 || combinedParticipantKey(group) != want {
+			return defaultName
+		}
+	}
+	names := make([]string, 0, len(groups[0].items))
+	for _, item := range groups[0].items {
+		names = append(names, item.personName)
+	}
+	return strings.Join(names, ", ")
+}
+
+func combinedParticipantKey(group combinedGroup) string {
+	parts := make([]string, 0, len(group.items))
+	for _, item := range group.items {
+		parts = append(parts, fmt.Sprint(item.personIndex))
+	}
+	return strings.Join(parts, ",")
 }
 
 func combinedTitle(personName, summary string) string {
