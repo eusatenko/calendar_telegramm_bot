@@ -72,20 +72,32 @@ func (b *Bot) scheduleEdit(ctx context.Context, q CallbackQuery, parts []string)
 			return b.invalid(ctx, q)
 		}
 		return b.editEventCard(ctx, q, parts[2])
-	case "targets":
-		if len(parts) != 4 || (parts[3] != "one" && parts[3] != "all") {
+	case "target":
+		if len(parts) != 4 {
 			return b.invalid(ctx, q)
 		}
 		session, ok := b.editSession(q.From.ID, parts[2])
 		if !ok {
 			return b.edit(ctx, q, "Сеанс устарел. Выберите событие заново.", editBackMenu())
 		}
-		if parts[3] == "one" {
-			session.selectedKeys = []string{session.personKey}
-			session.targetsText = "• " + b.people[session.personKey].Name + " (только выбранное событие)"
-		} else {
-			session.selectedKeys = copyKeys(session.candidates)
+		if !copyContainsKey(session.candidates, parts[3]) {
+			return b.invalid(ctx, q)
 		}
+		session.selectedKeys = toggleKey(session.selectedKeys, parts[3])
+		b.saveEditSession(parts[2], session)
+		return b.showEditTargets(ctx, q, parts[2], session, "Где изменить событие?")
+	case "targets_done":
+		if len(parts) != 3 {
+			return b.invalid(ctx, q)
+		}
+		session, ok := b.editSession(q.From.ID, parts[2])
+		if !ok {
+			return b.edit(ctx, q, "Сеанс устарел. Выберите событие заново.", editBackMenu())
+		}
+		if len(session.selectedKeys) == 0 {
+			return b.showEditTargets(ctx, q, parts[2], session, "Выберите хотя бы один календарь.")
+		}
+		session.targetsText = selectedTargetsText(session)
 		b.saveEditSession(parts[2], session)
 		return b.showEditActions(ctx, q, parts[2], session)
 	case "field":
@@ -106,7 +118,7 @@ func (b *Bot) scheduleEdit(ctx context.Context, q CallbackQuery, parts []string)
 		}
 		return b.promptEditInput(ctx, q, parts[2], parts[3], googleapi.ScopeOccurrence)
 	case "scope":
-		if len(parts) != 5 || (parts[3] != "title" && parts[3] != "time") || (parts[4] != string(googleapi.ScopeOccurrence) && parts[4] != string(googleapi.ScopeSeries)) {
+		if len(parts) != 5 || (parts[3] != "title" && parts[3] != "time" && parts[3] != "location") || (parts[4] != string(googleapi.ScopeOccurrence) && parts[4] != string(googleapi.ScopeSeries)) {
 			return b.invalid(ctx, q)
 		}
 		if _, ok := b.editSession(q.From.ID, parts[2]); !ok {
@@ -210,19 +222,11 @@ func (b *Bot) editEventCard(ctx context.Context, q CallbackQuery, token string) 
 	}
 	if len(linked) > 0 {
 		session.candidates = linked
-		session.targetsText = b.linkedTargetNames(linked)
+		session.selectedKeys = copyKeys(linked)
+		session.candidateLabels = b.linkedTargetLabels(linked)
+		session.targetsText = selectedTargetsText(session)
 		b.saveEditSession(token, session)
-		if len(linked) > 1 {
-			markup := Markup{InlineKeyboard: [][]Button{
-				{{Text: "Только у " + b.people[session.personKey].Name, CallbackData: "edit:targets:" + token + ":one"}},
-				{{Text: "Во всех связанных", CallbackData: "edit:targets:" + token + ":all"}},
-				{{Text: "Отмена", CallbackData: "edit:menu"}},
-			}}
-			return b.edit(ctx, q, eventDescription(session.event, b.loc)+"\n\nСвязанные календари:\n"+session.targetsText+"\n\nГде изменить событие?", markup)
-		}
-		session.selectedKeys = []string{session.personKey}
-		b.saveEditSession(token, session)
-		return b.showEditActions(ctx, q, token, session)
+		return b.showEditTargets(ctx, q, token, session, "Где изменить событие?")
 	}
 	match, err := b.findMatchingCopies(session)
 	if err != nil {
@@ -233,19 +237,39 @@ func (b *Bot) editEventCard(ctx context.Context, q CallbackQuery, token string) 
 	}
 	session.candidates = match.copies
 	session.needsLink = true
-	session.targetsText = b.matchTargetsText(match)
-	b.saveEditSession(token, session)
-	if len(match.copies) > 1 {
-		markup := Markup{InlineKeyboard: [][]Button{
-			{{Text: "Только у " + b.people[session.personKey].Name, CallbackData: "edit:targets:" + token + ":one"}},
-			{{Text: "Во всех найденных", CallbackData: "edit:targets:" + token + ":all"}},
-			{{Text: "Отмена", CallbackData: "edit:menu"}},
-		}}
-		return b.edit(ctx, q, eventDescription(session.event, b.loc)+"\n\nНайдены возможные копии:\n"+session.targetsText+"\n\nГде изменить событие?", markup)
+	session.selectedKeys = copyKeys(match.copies)
+	session.candidateLabels = b.matchTargetLabels(match)
+	session.targetsText = selectedTargetsText(session)
+	if !match.exactTitle && len(match.copies) > 1 {
+		session.targetsNote = "Названия различаются — проверьте список."
 	}
-	session.selectedKeys = []string{session.personKey}
 	b.saveEditSession(token, session)
-	return b.showEditActions(ctx, q, token, session)
+	return b.showEditTargets(ctx, q, token, session, "Где изменить событие?")
+}
+
+func (b *Bot) showEditTargets(ctx context.Context, q CallbackQuery, token string, session editSession, heading string) error {
+	text := eventDescription(session.event, b.loc) + "\n\n" + heading
+	if session.targetsNote != "" {
+		text += "\n" + session.targetsNote
+	}
+	return b.edit(ctx, q, text, editTargetsMarkup(token, session, b.order))
+}
+
+func editTargetsMarkup(token string, session editSession, order []string) Markup {
+	rows := [][]Button{}
+	for _, key := range order {
+		if !copyContainsKey(session.candidates, key) {
+			continue
+		}
+		prefix := "☐ "
+		if keySelected(session.selectedKeys, key) {
+			prefix = "☑ "
+		}
+		label := session.candidateLabels[key]
+		rows = append(rows, []Button{{Text: truncateRunes(prefix+label, 60), CallbackData: "edit:target:" + token + ":" + key}})
+	}
+	rows = append(rows, []Button{{Text: "Продолжить", CallbackData: "edit:targets_done:" + token}}, []Button{{Text: "Отмена", CallbackData: "edit:menu"}})
+	return Markup{InlineKeyboard: rows}
 }
 
 func (b *Bot) showEditActions(ctx context.Context, q CallbackQuery, token string, session editSession) error {
@@ -404,32 +428,65 @@ func (b *Bot) findMatchingCopies(session editSession) (copyMatch, error) {
 	return byInterval, nil
 }
 
-func (b *Bot) matchTargetsText(match copyMatch) string {
-	lines := make([]string, 0, len(match.copies))
+func (b *Bot) matchTargetLabels(match copyMatch) map[string]string {
+	labels := make(map[string]string, len(match.copies))
 	for i, candidate := range match.copies {
-		lines = append(lines, "• "+b.people[candidate.CalendarKey].Name+": "+match.events[i].Summary)
+		labels[candidate.CalendarKey] = b.people[candidate.CalendarKey].Name + ": " + match.events[i].Summary
 	}
-	if len(lines) == 1 {
-		lines[0] += " (только выбранное событие)"
-	} else if !match.exactTitle {
-		lines = append(lines, "Названия различаются — проверьте список перед подтверждением.")
-	}
-	return strings.Join(lines, "\n")
+	return labels
 }
 
-func (b *Bot) linkedTargetNames(copies []storage.EventCopy) string {
-	lines := make([]string, 0, len(copies))
+func (b *Bot) linkedTargetLabels(copies []storage.EventCopy) map[string]string {
+	labels := make(map[string]string, len(copies))
 	for _, copy := range copies {
 		name := copy.CalendarKey
 		if person, ok := b.people[copy.CalendarKey]; ok {
 			name = person.Name
 		}
-		lines = append(lines, "• "+name)
+		labels[copy.CalendarKey] = name
 	}
-	if len(lines) == 1 {
-		lines[0] += " (только выбранное событие)"
+	return labels
+}
+
+func selectedTargetsText(session editSession) string {
+	lines := make([]string, 0, len(session.selectedKeys))
+	for _, copy := range session.candidates {
+		if keySelected(session.selectedKeys, copy.CalendarKey) {
+			lines = append(lines, "• "+session.candidateLabels[copy.CalendarKey])
+		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func copyContainsKey(copies []storage.EventCopy, key string) bool {
+	for _, copy := range copies {
+		if copy.CalendarKey == key {
+			return true
+		}
+	}
+	return false
+}
+
+func keySelected(keys []string, key string) bool {
+	for _, candidate := range keys {
+		if candidate == key {
+			return true
+		}
+	}
+	return false
+}
+
+func toggleKey(keys []string, key string) []string {
+	if keySelected(keys, key) {
+		result := make([]string, 0, len(keys)-1)
+		for _, candidate := range keys {
+			if candidate != key {
+				result = append(result, candidate)
+			}
+		}
+		return result
+	}
+	return append(keys, key)
 }
 
 func sameCopy(a, b calendar.Event) bool {

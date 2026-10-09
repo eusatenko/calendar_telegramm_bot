@@ -27,15 +27,17 @@ type inputState struct {
 	scope       googleapi.Scope
 }
 type editSession struct {
-	expires      time.Time
-	actor        int64
-	personKey    string
-	event        calendar.Event
-	candidates   []storage.EventCopy
-	selectedKeys []string
-	targetsText  string
-	needsLink    bool
-	pending      *schedule.Request
+	expires         time.Time
+	actor           int64
+	personKey       string
+	event           calendar.Event
+	candidates      []storage.EventCopy
+	selectedKeys    []string
+	candidateLabels map[string]string
+	targetsText     string
+	targetsNote     string
+	needsLink       bool
+	pending         *schedule.Request
 }
 type createSession struct {
 	expires     time.Time

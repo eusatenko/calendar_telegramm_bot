@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -263,6 +264,41 @@ func TestParseCustomDateUsesConfiguredTimezone(t *testing.T) {
 	}
 	if got.Format(time.RFC3339) != "2026-10-10T00:00:00+03:00" {
 		t.Fatalf("date=%s", got.Format(time.RFC3339))
+	}
+}
+
+func TestEditTargetCheckboxesContainOnlyMatchedCalendars(t *testing.T) {
+	session := editSession{
+		candidates:      []storage.EventCopy{{CalendarKey: "anya", ICalUID: "a"}, {CalendarKey: "lesha", ICalUID: "b"}},
+		selectedKeys:    []string{"anya"},
+		candidateLabels: map[string]string{"anya": "Аня: Танцы", "lesha": "Лёша: Танцы"},
+	}
+	encoded, err := json.Marshal(editTargetsMarkup("token", session, []string{"anya", "lesha", "sasha"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(encoded)
+	if !strings.Contains(text, "☑ Аня: Танцы") || !strings.Contains(text, "☐ Лёша: Танцы") || strings.Contains(text, "sasha") {
+		t.Fatalf("markup=%s", text)
+	}
+}
+
+func TestRecurringLocationScopeIsAccepted(t *testing.T) {
+	bot, _, calls := botFixture(t)
+	token := "location-token"
+	bot.editSessions[token] = editSession{expires: time.Now().Add(time.Minute), actor: 1, event: calendar.Event{Recurring: true}}
+	q := CallbackQuery{ID: "q", From: User{ID: 1}, Message: Message{MessageID: 7, Chat: Chat{ID: 1}}}
+	if err := bot.scheduleEdit(context.Background(), q, []string{"edit", "scope", token, "location", "series"}); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, call := range *calls {
+		if strings.Contains(fmt.Sprint(call.body["text"]), "новое место") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("calls=%+v", *calls)
 	}
 }
 
