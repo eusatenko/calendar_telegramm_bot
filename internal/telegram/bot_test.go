@@ -511,3 +511,25 @@ func TestBotCommandIgnoresAnotherBotMention(t *testing.T) {
 		t.Fatalf("command=%q", got)
 	}
 }
+
+func TestEmptyMarkupIsSerializedAsTelegramArray(t *testing.T) {
+	bot, store, calls := botFixture(t)
+	if err := store.BootstrapAdmin(1); err != nil {
+		t.Fatal(err)
+	}
+	message := Message{From: User{ID: 1}, Chat: Chat{ID: -100123, Type: "supergroup"}, Text: "/notifications_here"}
+	if err := bot.handleMessage(context.Background(), message); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("calls=%+v", *calls)
+	}
+	replyMarkup, ok := (*calls)[0].body["reply_markup"].(map[string]any)
+	if !ok {
+		t.Fatalf("reply_markup=%#v", (*calls)[0].body["reply_markup"])
+	}
+	keyboard, ok := replyMarkup["inline_keyboard"].([]any)
+	if !ok || len(keyboard) != 0 {
+		t.Fatalf("inline_keyboard=%#v", replyMarkup["inline_keyboard"])
+	}
+}

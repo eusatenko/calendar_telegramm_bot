@@ -89,9 +89,15 @@ func (c *Client) GetUpdates(ctx context.Context, offset int) ([]Update, error) {
 	return out, e
 }
 func (c *Client) Send(ctx context.Context, chat int64, text string, m Markup) error {
+	if m.InlineKeyboard == nil {
+		m.InlineKeyboard = [][]Button{}
+	}
 	return c.call(ctx, "sendMessage", map[string]any{"chat_id": chat, "text": text, "reply_markup": m}, nil)
 }
 func (c *Client) Edit(ctx context.Context, chat int64, msg int, text string, m Markup) error {
+	if m.InlineKeyboard == nil {
+		m.InlineKeyboard = [][]Button{}
+	}
 	return c.call(ctx, "editMessageText", map[string]any{"chat_id": chat, "message_id": msg, "text": text, "reply_markup": m}, nil)
 }
 func (c *Client) Answer(ctx context.Context, id, text string) error {

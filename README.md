@@ -95,7 +95,7 @@ OAuth client secret и refresh token нельзя коммитить, печат
 Добавьте бота в Telegram-группу, затем администратор бота должен отправить в этой группе:
 
 ```text
-/notifications_here@family_calendar_usatenko
+/notifications_here@usatenkoCalendarBot
 ```
 
 Бот сохранит ID группы в SQLite и будет отправлять туда уведомления об успешном добавлении, изменении или удалении событий. При частичном сбое в уведомлении будет статус каждого календаря. Privacy Mode можно оставить включённым.
