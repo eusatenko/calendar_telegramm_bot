@@ -42,10 +42,27 @@ func Week(person string, start time.Time, events []calendar.Event, stale bool) s
 }
 
 func Combined(title string, start time.Time, people []PersonEvents) string {
+	groups, eventCounts := combinedGroups(start, people)
 	var b strings.Builder
 	b.WriteString(title)
-	for _, p := range people {
-		fmt.Fprintf(&b, "\n\n%s\n%s", p.Name, dayLines(start, p.Events))
+	for _, group := range sortedCombinedGroups(groups, func(group combinedGroup) bool { return len(group.items) >= 3 }) {
+		b.WriteString("\n\n" + combinedLine(start, group))
+	}
+	for personIndex, p := range people {
+		sectionGroups := sortedCombinedGroups(groups, func(group combinedGroup) bool {
+			return len(group.items) < 3 && group.anchor() == personIndex
+		})
+		if len(sectionGroups) == 0 && eventCounts[personIndex] > 0 && !p.Stale && !p.Error {
+			continue
+		}
+		b.WriteString("\n\n" + p.Name)
+		if len(sectionGroups) == 0 && eventCounts[personIndex] == 0 {
+			b.WriteString("\nНет занятий")
+		} else {
+			for _, group := range sectionGroups {
+				b.WriteString("\n" + combinedLine(start, group))
+			}
+		}
 		if p.Error {
 			b.WriteString("\n⚠️ Не удалось получить расписание.")
 		} else if p.Stale {
@@ -61,20 +78,113 @@ type PersonEvents struct {
 	Stale, Error bool
 }
 
-func dayLines(day time.Time, events []calendar.Event) string {
-	end := day.AddDate(0, 0, 1)
-	var list []calendar.Event
-	for _, e := range events {
-		if calendar.Overlaps(e, day, end) {
-			list = append(list, e)
+type combinedItem struct {
+	personIndex int
+	personName  string
+	event       calendar.Event
+	title       string
+}
+
+type combinedGroup struct {
+	items []combinedItem
+}
+
+func (g combinedGroup) anchor() int {
+	anchor := g.items[0].personIndex
+	for _, item := range g.items[1:] {
+		if item.personIndex < anchor {
+			anchor = item.personIndex
 		}
 	}
-	sort.SliceStable(list, func(i, j int) bool {
-		if list[i].AllDay != list[j].AllDay {
-			return list[i].AllDay
+	return anchor
+}
+
+func combinedGroups(day time.Time, people []PersonEvents) ([]combinedGroup, []int) {
+	var groups []combinedGroup
+	byKey := map[string][]int{}
+	eventCounts := make([]int, len(people))
+	for personIndex, person := range people {
+		for _, event := range eventsForDay(day, person.Events) {
+			eventCounts[personIndex]++
+			title := combinedTitle(person.Name, event.Summary)
+			key := combinedKey(event, title)
+			groupIndex := -1
+			for _, candidate := range byKey[key] {
+				if !groupHasPerson(groups[candidate], personIndex) {
+					groupIndex = candidate
+					break
+				}
+			}
+			if groupIndex < 0 {
+				groups = append(groups, combinedGroup{})
+				groupIndex = len(groups) - 1
+				byKey[key] = append(byKey[key], groupIndex)
+			}
+			groups[groupIndex].items = append(groups[groupIndex].items, combinedItem{personIndex: personIndex, personName: person.Name, event: event, title: title})
 		}
-		return list[i].Start.Before(list[j].Start)
+	}
+	return groups, eventCounts
+}
+
+func groupHasPerson(group combinedGroup, personIndex int) bool {
+	for _, item := range group.items {
+		if item.personIndex == personIndex {
+			return true
+		}
+	}
+	return false
+}
+
+func sortedCombinedGroups(groups []combinedGroup, include func(combinedGroup) bool) []combinedGroup {
+	var selected []combinedGroup
+	for _, group := range groups {
+		if include(group) {
+			selected = append(selected, group)
+		}
+	}
+	sort.SliceStable(selected, func(i, j int) bool {
+		a, b := selected[i].items[0].event, selected[j].items[0].event
+		if a.AllDay != b.AllDay {
+			return a.AllDay
+		}
+		return a.Start.Before(b.Start)
 	})
+	return selected
+}
+
+func combinedLine(day time.Time, group combinedGroup) string {
+	event := group.items[0].event
+	title := safeSummary(event.Summary)
+	if len(group.items) > 1 {
+		names := make([]string, 0, len(group.items))
+		for _, item := range group.items {
+			names = append(names, item.personName)
+		}
+		title = strings.Join(names, ", ") + " — " + safeSummary(group.items[0].title)
+	}
+	if event.AllDay {
+		return "Весь день — " + title
+	}
+	return fmt.Sprintf("%s–%s %s", event.Start.In(day.Location()).Format("15:04"), event.End.In(day.Location()).Format("15:04"), title)
+}
+
+func combinedTitle(personName, summary string) string {
+	summary = strings.TrimSpace(summary)
+	for _, separator := range []string{"—", "–", "-", ":"} {
+		prefix := personName + " " + separator
+		if len(summary) >= len(prefix) && strings.EqualFold(summary[:len(prefix)], prefix) {
+			return strings.TrimSpace(summary[len(prefix):])
+		}
+	}
+	return summary
+}
+
+func combinedKey(event calendar.Event, title string) string {
+	return fmt.Sprintf("%t|%d|%d|%s", event.AllDay, event.Start.UnixNano(), event.End.UnixNano(), strings.ToLower(strings.Join(strings.Fields(title), " ")))
+}
+
+func dayLines(day time.Time, events []calendar.Event) string {
+	list := eventsForDay(day, events)
 	if len(list) == 0 {
 		return "Нет занятий"
 	}
@@ -89,6 +199,23 @@ func dayLines(day time.Time, events []calendar.Event) string {
 		lines = append(lines, fmt.Sprintf("%s–%s %s", s.Format("15:04"), en.Format("15:04"), safeSummary(e.Summary)))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func eventsForDay(day time.Time, events []calendar.Event) []calendar.Event {
+	end := day.AddDate(0, 0, 1)
+	var list []calendar.Event
+	for _, event := range events {
+		if calendar.Overlaps(event, day, end) {
+			list = append(list, event)
+		}
+	}
+	sort.SliceStable(list, func(i, j int) bool {
+		if list[i].AllDay != list[j].AllDay {
+			return list[i].AllDay
+		}
+		return list[i].Start.Before(list[j].Start)
+	})
+	return list
 }
 func safeSummary(s string) string {
 	if strings.TrimSpace(s) == "" {
