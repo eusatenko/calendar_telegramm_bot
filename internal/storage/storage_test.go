@@ -155,6 +155,9 @@ func TestActiveUserCanLinkAndAuditEventEdit(t *testing.T) {
 	if err := s.RecordEventEdit(2, 1, 0); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.RecordEventCreate(2, 1, 0); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestLinkAndLoadSingleEvent(t *testing.T) {

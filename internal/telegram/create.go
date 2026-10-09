@@ -30,7 +30,7 @@ func (b *Bot) scheduleCreate(ctx context.Context, q CallbackQuery, parts []strin
 		}
 		session, ok := b.createSession(q.From.ID, parts[2])
 		if !ok {
-			return b.edit(ctx, q, "Сеанс устарел.", adminMenu(true))
+			return b.edit(ctx, q, "Сеанс устарел.", mainMenuButton())
 		}
 		if _, ok = b.people[parts[3]]; !ok {
 			return b.invalid(ctx, q)
@@ -44,7 +44,7 @@ func (b *Bot) scheduleCreate(ctx context.Context, q CallbackQuery, parts []strin
 		}
 		session, ok := b.createSession(q.From.ID, parts[2])
 		if !ok {
-			return b.edit(ctx, q, "Сеанс устарел.", adminMenu(true))
+			return b.edit(ctx, q, "Сеанс устарел.", mainMenuButton())
 		}
 		if len(selectedCreateKeys(session, b.order)) == 0 {
 			return b.edit(ctx, q, "Выберите хотя бы один календарь.", createTargetsMarkup(parts[2], session, b))
@@ -52,7 +52,7 @@ func (b *Bot) scheduleCreate(ctx context.Context, q CallbackQuery, parts []strin
 		return b.edit(ctx, q, "Когда добавить событие?", Markup{InlineKeyboard: [][]Button{
 			{{Text: "Сегодня", CallbackData: "create:date:" + parts[2] + ":0"}, {Text: "Завтра", CallbackData: "create:date:" + parts[2] + ":1"}},
 			{{Text: "Указать дату", CallbackData: "create:date:" + parts[2] + ":custom"}},
-			{{Text: "Отмена", CallbackData: "admin:menu"}},
+			{{Text: "Отмена", CallbackData: "main"}},
 		}})
 	case "date":
 		if len(parts) != 4 {
@@ -60,11 +60,11 @@ func (b *Bot) scheduleCreate(ctx context.Context, q CallbackQuery, parts []strin
 		}
 		session, ok := b.createSession(q.From.ID, parts[2])
 		if !ok {
-			return b.edit(ctx, q, "Сеанс устарел.", adminMenu(true))
+			return b.edit(ctx, q, "Сеанс устарел.", mainMenuButton())
 		}
 		if parts[3] == "custom" {
 			b.setAwaiting(q.From.ID, inputState{expires: time.Now().Add(5 * time.Minute), kind: "create_date", token: parts[2]})
-			return b.edit(ctx, q, "Отправьте дату в формате ДД.ММ.ГГГГ.", cancelMenu())
+			return b.edit(ctx, q, "Отправьте дату в формате ДД.ММ.ГГГГ.", createCancelMenu())
 		}
 		offset, err := strconv.Atoi(parts[3])
 		if err != nil || (offset != 0 && offset != 1) {
@@ -80,11 +80,11 @@ func (b *Bot) scheduleCreate(ctx context.Context, q CallbackQuery, parts []strin
 		}
 		session, ok := b.createSession(q.From.ID, parts[2])
 		if !ok || session.summary == "" || session.start.IsZero() {
-			return b.edit(ctx, q, "Сеанс устарел.", adminMenu(true))
+			return b.edit(ctx, q, "Сеанс устарел.", mainMenuButton())
 		}
 		if parts[3] == "weekly" {
 			b.setAwaiting(q.From.ID, inputState{expires: time.Now().Add(5 * time.Minute), kind: "create_until", token: parts[2]})
-			return b.edit(ctx, q, "Отправьте дату последнего повторения в формате ДД.ММ.ГГГГ.", cancelMenu())
+			return b.edit(ctx, q, "Отправьте дату последнего повторения в формате ДД.ММ.ГГГГ.", createCancelMenu())
 		}
 		session.repeatUntil = nil
 		b.saveCreateSession(parts[2], session)
@@ -95,14 +95,14 @@ func (b *Bot) scheduleCreate(ctx context.Context, q CallbackQuery, parts []strin
 		}
 		session, ok := b.createSession(q.From.ID, parts[2])
 		if !ok || session.summary == "" || session.start.IsZero() {
-			return b.edit(ctx, q, "Сеанс устарел.", adminMenu(true))
+			return b.edit(ctx, q, "Сеанс устарел.", mainMenuButton())
 		}
 		results, err := b.editor.Create(ctx, schedule.CreateRequest{Actor: q.From.ID, TargetKeys: selectedCreateKeys(session, b.order), Summary: session.summary, Location: session.location, Start: session.start, End: session.end, RepeatUntil: session.repeatUntil})
 		if err != nil {
 			return err
 		}
 		b.deleteCreateSession(parts[2])
-		return b.edit(ctx, q, b.formatCopyResults(q.From.ID, "Создание завершено:", results), adminMenu(true))
+		return b.edit(ctx, q, b.formatCopyResults(q.From.ID, "Создание завершено:", results), mainMenuButton())
 	default:
 		return b.invalid(ctx, q)
 	}
@@ -112,43 +112,43 @@ func (b *Bot) handleCreateInput(ctx context.Context, message Message, state inpu
 	session, ok := b.createSession(message.From.ID, state.token)
 	if !ok {
 		b.clearAwaiting(message.From.ID)
-		return b.client.Send(ctx, message.Chat.ID, "Сеанс устарел.", adminMenu(true))
+		return b.client.Send(ctx, message.Chat.ID, "Сеанс устарел.", mainMenuButton())
 	}
 	switch state.kind {
 	case "create_date":
 		date, err := parseDate(message.Text, b.loc)
 		if err != nil {
-			return b.client.Send(ctx, message.Chat.ID, "Неверная дата. Пример: 25.10.2026.", cancelMenu())
+			return b.client.Send(ctx, message.Chat.ID, "Неверная дата. Пример: 25.10.2026.", createCancelMenu())
 		}
 		session.date = date
 		b.saveCreateSession(state.token, session)
 		b.setAwaiting(message.From.ID, inputState{expires: time.Now().Add(5 * time.Minute), kind: "create_title", token: state.token})
-		return b.client.Send(ctx, message.Chat.ID, "Отправьте название события.", cancelMenu())
+		return b.client.Send(ctx, message.Chat.ID, "Отправьте название события.", createCancelMenu())
 	case "create_title":
 		title := strings.TrimSpace(message.Text)
 		if title == "" || len([]rune(title)) > 300 {
-			return b.client.Send(ctx, message.Chat.ID, "Название должно содержать от 1 до 300 символов.", cancelMenu())
+			return b.client.Send(ctx, message.Chat.ID, "Название должно содержать от 1 до 300 символов.", createCancelMenu())
 		}
 		session.summary = title
 		b.saveCreateSession(state.token, session)
 		b.setAwaiting(message.From.ID, inputState{expires: time.Now().Add(5 * time.Minute), kind: "create_time", token: state.token})
-		return b.client.Send(ctx, message.Chat.ID, "Отправьте время в формате 18:00-19:30.", cancelMenu())
+		return b.client.Send(ctx, message.Chat.ID, "Отправьте время в формате 18:00-19:30.", createCancelMenu())
 	case "create_time":
 		start, end, err := parseTimeRange(message.Text, session.date, b.loc)
 		if err != nil {
-			return b.client.Send(ctx, message.Chat.ID, "Неверное время. Пример: 18:00-19:30.", cancelMenu())
+			return b.client.Send(ctx, message.Chat.ID, "Неверное время. Пример: 18:00-19:30.", createCancelMenu())
 		}
 		session.start, session.end = start, end
 		b.saveCreateSession(state.token, session)
 		b.setAwaiting(message.From.ID, inputState{expires: time.Now().Add(5 * time.Minute), kind: "create_location", token: state.token})
-		return b.client.Send(ctx, message.Chat.ID, "Отправьте место события или один дефис (-), чтобы пропустить.", cancelMenu())
+		return b.client.Send(ctx, message.Chat.ID, "Отправьте место события или один дефис (-), чтобы пропустить.", createCancelMenu())
 	case "create_location":
 		location := strings.TrimSpace(message.Text)
 		if location == "-" {
 			location = ""
 		}
 		if len([]rune(location)) > 500 {
-			return b.client.Send(ctx, message.Chat.ID, "Место должно содержать не более 500 символов.", cancelMenu())
+			return b.client.Send(ctx, message.Chat.ID, "Место должно содержать не более 500 символов.", createCancelMenu())
 		}
 		session.location = location
 		b.saveCreateSession(state.token, session)
@@ -157,7 +157,7 @@ func (b *Bot) handleCreateInput(ctx context.Context, message Message, state inpu
 	case "create_until":
 		until, err := parseDate(message.Text, b.loc)
 		if err != nil || until.Before(time.Date(session.start.Year(), session.start.Month(), session.start.Day(), 0, 0, 0, 0, b.loc)) {
-			return b.client.Send(ctx, message.Chat.ID, "Дата окончания должна быть не раньше даты события.", cancelMenu())
+			return b.client.Send(ctx, message.Chat.ID, "Дата окончания должна быть не раньше даты события.", createCancelMenu())
 		}
 		session.repeatUntil = &until
 		b.saveCreateSession(state.token, session)
@@ -171,7 +171,7 @@ func (b *Bot) handleCreateInput(ctx context.Context, message Message, state inpu
 func (b *Bot) showCreateTargets(ctx context.Context, q CallbackQuery, token string) error {
 	session, ok := b.createSession(q.From.ID, token)
 	if !ok {
-		return b.edit(ctx, q, "Сеанс устарел.", adminMenu(true))
+		return b.edit(ctx, q, "Сеанс устарел.", mainMenuButton())
 	}
 	return b.edit(ctx, q, "Кому добавить событие? Выберите один или несколько календарей.", createTargetsMarkup(token, session, b))
 }
@@ -185,13 +185,13 @@ func createTargetsMarkup(token string, session createSession, b *Bot) Markup {
 		}
 		rows = append(rows, []Button{{Text: prefix + b.people[key].Name, CallbackData: "create:target:" + token + ":" + key}})
 	}
-	rows = append(rows, []Button{{Text: "Продолжить", CallbackData: "create:targets_done:" + token}}, []Button{{Text: "Отмена", CallbackData: "admin:menu"}})
+	rows = append(rows, []Button{{Text: "Продолжить", CallbackData: "create:targets_done:" + token}}, []Button{{Text: "Отмена", CallbackData: "main"}})
 	return Markup{InlineKeyboard: rows}
 }
 
 func (b *Bot) promptCreateTitleEdit(ctx context.Context, q CallbackQuery, token string) error {
 	b.setAwaiting(q.From.ID, inputState{expires: time.Now().Add(5 * time.Minute), kind: "create_title", token: token})
-	return b.edit(ctx, q, "Отправьте название события.", cancelMenu())
+	return b.edit(ctx, q, "Отправьте название события.", createCancelMenu())
 }
 
 func (b *Bot) showCreatePreview(ctx context.Context, q CallbackQuery, token string, session createSession) error {
@@ -213,12 +213,16 @@ func createPreviewText(session createSession, b *Bot) string {
 func createTypeMarkup(token string) Markup {
 	return Markup{InlineKeyboard: [][]Button{
 		{{Text: "Разовое", CallbackData: "create:type:" + token + ":once"}, {Text: "Еженедельно", CallbackData: "create:type:" + token + ":weekly"}},
-		{{Text: "Отмена", CallbackData: "admin:menu"}},
+		{{Text: "Отмена", CallbackData: "main"}},
 	}}
 }
 
 func createConfirmMarkup(token string) Markup {
-	return Markup{InlineKeyboard: [][]Button{{{Text: "Подтвердить", CallbackData: "create:confirm:" + token}}, {{Text: "Отмена", CallbackData: "admin:menu"}}}}
+	return Markup{InlineKeyboard: [][]Button{{{Text: "Подтвердить", CallbackData: "create:confirm:" + token}}, {{Text: "Отмена", CallbackData: "main"}}}}
+}
+
+func createCancelMenu() Markup {
+	return Markup{InlineKeyboard: [][]Button{{{Text: "Отмена", CallbackData: "main"}}}}
 }
 
 func (b *Bot) newCreateSession(actor int64) (string, error) {

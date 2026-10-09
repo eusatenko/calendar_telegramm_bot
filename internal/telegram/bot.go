@@ -138,7 +138,7 @@ func (b *Bot) handleMessage(ctx context.Context, m Message) error {
 	if m.Text == "/cancel" {
 		b.clearAwaiting(m.From.ID)
 		if admin {
-			return b.client.Send(ctx, m.Chat.ID, "Действие отменено.", adminMenu(b.editor != nil))
+			return b.client.Send(ctx, m.Chat.ID, "Действие отменено.", adminMenu())
 		}
 		return b.client.Send(ctx, m.Chat.ID, "Действие отменено.", mainMenu(false, b.editor != nil))
 	}
@@ -163,7 +163,7 @@ func (b *Bot) handleMessage(ctx context.Context, m Message) error {
 			return e
 		}
 		b.clearAwaiting(m.From.ID)
-		return b.client.Send(ctx, m.Chat.ID, fmt.Sprintf("Пользователь %d добавлен или активирован.", id), adminMenu(b.editor != nil))
+		return b.client.Send(ctx, m.Chat.ID, fmt.Sprintf("Пользователь %d добавлен или активирован.", id), adminMenu())
 	}
 	return b.client.Send(ctx, m.Chat.ID, "Семейное расписание", mainMenu(admin, b.editor != nil))
 }
@@ -213,10 +213,7 @@ func (b *Bot) handleCallback(ctx context.Context, q CallbackQuery) error {
 		}
 		return b.scheduleEdit(ctx, q, parts)
 	case "create":
-		if !admin || b.editor == nil {
-			return b.denied(ctx, q)
-		}
-		if err = b.store.RequireAdmin(ctx, q.From.ID); err != nil {
+		if b.editor == nil {
 			return b.denied(ctx, q)
 		}
 		return b.scheduleCreate(ctx, q, parts)
@@ -280,7 +277,7 @@ func (b *Bot) admin(ctx context.Context, q CallbackQuery, p []string) error {
 	switch p[1] {
 	case "menu":
 		b.clearAwaiting(q.From.ID)
-		return b.edit(ctx, q, "Управление доступом", adminMenu(b.editor != nil))
+		return b.edit(ctx, q, "Управление доступом", adminMenu())
 	case "users":
 		users, e := b.store.ListUsers()
 		if e != nil {
@@ -321,7 +318,7 @@ func (b *Bot) admin(ctx context.Context, q CallbackQuery, p []string) error {
 			return e
 		}
 		link := fmt.Sprintf("https://t.me/%s?start=invite_%s", b.username, token)
-		return b.edit(ctx, q, "Одноразовое приглашение действительно "+b.inviteTTL.String()+":\n\n"+link, adminMenu(b.editor != nil))
+		return b.edit(ctx, q, "Одноразовое приглашение действительно "+b.inviteTTL.String()+":\n\n"+link, adminMenu())
 	case "toggle":
 		if len(p) != 4 {
 			return b.invalid(ctx, q)
@@ -332,12 +329,12 @@ func (b *Bot) admin(ctx context.Context, q CallbackQuery, p []string) error {
 		}
 		e = b.store.SetActive(q.From.ID, id, p[3] == "on")
 		if errors.Is(e, storage.ErrLastAdmin) {
-			return b.edit(ctx, q, "Нельзя отключить последнего активного администратора.", adminMenu(b.editor != nil))
+			return b.edit(ctx, q, "Нельзя отключить последнего активного администратора.", adminMenu())
 		}
 		if e != nil {
 			return e
 		}
-		return b.edit(ctx, q, "Статус пользователя обновлён.", adminMenu(b.editor != nil))
+		return b.edit(ctx, q, "Статус пользователя обновлён.", adminMenu())
 	default:
 		return b.invalid(ctx, q)
 	}
@@ -381,7 +378,8 @@ func (b *Bot) clearAwaiting(id int64) { b.mu.Lock(); delete(b.awaiting, id); b.m
 func mainMenu(admin bool, editing ...bool) Markup {
 	m := Markup{InlineKeyboard: [][]Button{{{Text: "Сегодня всех", CallbackData: "all:today"}, {Text: "Завтра всех", CallbackData: "all:tomorrow"}}, {{Text: "Аня", CallbackData: "person:anya"}, {Text: "Лёша", CallbackData: "person:lesha"}}, {{Text: "Саша", CallbackData: "person:sasha"}, {Text: "Настя", CallbackData: "person:nastya"}}}}
 	if len(editing) > 0 && editing[0] {
-		m.InlineKeyboard = append(m.InlineKeyboard, []Button{{Text: "Изменить расписание", CallbackData: "edit:menu"}})
+		calendarActions := []Button{{Text: "Изменить расписание", CallbackData: "edit:menu"}, {Text: "Добавить событие", CallbackData: "create:menu"}}
+		m.InlineKeyboard = append(m.InlineKeyboard, calendarActions)
 	}
 	if admin {
 		m.InlineKeyboard = append(m.InlineKeyboard, []Button{{Text: "Управление доступом", CallbackData: "admin:menu"}})
@@ -394,11 +392,8 @@ func mainMenuButton() Markup {
 func personMenu(k string) Markup {
 	return Markup{InlineKeyboard: [][]Button{{{Text: "Сегодня", CallbackData: "person:" + k + ":today"}, {Text: "Завтра", CallbackData: "person:" + k + ":tomorrow"}}, {{Text: "Неделя", CallbackData: "person:" + k + ":week"}}, {{Text: "Другой человек", CallbackData: "main"}, {Text: "Главное меню", CallbackData: "main"}}}}
 }
-func adminMenu(editing ...bool) Markup {
+func adminMenu() Markup {
 	rows := [][]Button{{{Text: "Пользователи", CallbackData: "admin:users"}}, {{Text: "Добавить по ID", CallbackData: "admin:add"}}, {{Text: "Создать приглашение", CallbackData: "admin:invite"}}}
-	if len(editing) > 0 && editing[0] {
-		rows = append(rows, []Button{{Text: "Добавить событие", CallbackData: "create:menu"}})
-	}
 	rows = append(rows, []Button{{Text: "Назад", CallbackData: "main"}})
 	return Markup{InlineKeyboard: rows}
 }

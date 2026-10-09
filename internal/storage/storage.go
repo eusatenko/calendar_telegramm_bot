@@ -155,7 +155,7 @@ func (s *Store) RecordEventEdit(actor int64, copyCount, failureCount int) error 
 }
 
 func (s *Store) RecordEventCreate(actor int64, copyCount, failureCount int) error {
-	if err := s.RequireAdmin(context.Background(), actor); err != nil {
+	if err := s.RequireAuthorized(context.Background(), actor); err != nil {
 		return err
 	}
 	_, err := s.db.Exec(`INSERT INTO audit_log(actor_user_id,action,created_at,metadata) VALUES(?,'EVENT_CREATED',?,?)`, actor, s.now().UTC(), fmt.Sprintf(`{"copy_count":%d,"failure_count":%d}`, copyCount, failureCount))

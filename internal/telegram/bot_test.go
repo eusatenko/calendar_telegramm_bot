@@ -100,15 +100,46 @@ func TestMenusHideAdminForUser(t *testing.T) {
 func TestEditingButtonIsFeatureGated(t *testing.T) {
 	disabled, _ := json.Marshal(mainMenu(false, false))
 	enabled, _ := json.Marshal(mainMenu(false, true))
+	adminEnabled := mainMenu(true, true)
 	if strings.Contains(string(disabled), "Изменить расписание") {
 		t.Fatal("editing button visible while disabled")
 	}
 	if !strings.Contains(string(enabled), "Изменить расписание") {
 		t.Fatal("editing button missing for authorized user while enabled")
 	}
-	admin, _ := json.Marshal(adminMenu(true))
-	if strings.Contains(string(admin), "Изменить расписание") || !strings.Contains(string(admin), "Добавить событие") {
+	if !strings.Contains(string(enabled), "Добавить событие") {
+		t.Fatal("create button missing for authorized user")
+	}
+	if len(adminEnabled.InlineKeyboard) < 4 || len(adminEnabled.InlineKeyboard[3]) != 2 || adminEnabled.InlineKeyboard[3][0].CallbackData != "edit:menu" || adminEnabled.InlineKeyboard[3][1].CallbackData != "create:menu" {
+		t.Fatalf("calendar actions are not adjacent: %+v", adminEnabled.InlineKeyboard)
+	}
+	admin, _ := json.Marshal(adminMenu())
+	if strings.Contains(string(admin), "Изменить расписание") || strings.Contains(string(admin), "Добавить событие") {
 		t.Fatal("admin menu buttons are incorrect")
+	}
+}
+
+func TestAuthorizedUserCanOpenCreation(t *testing.T) {
+	bot, store, calls := botFixture(t)
+	if err := store.BootstrapAdmin(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddUser(1, 2); err != nil {
+		t.Fatal(err)
+	}
+	bot.EnableScheduleEditing(&recordingEditor{})
+	q := CallbackQuery{ID: "q", From: User{ID: 2}, Message: Message{MessageID: 7, Chat: Chat{ID: 2}}, Data: "create:menu"}
+	if err := bot.handleCallback(context.Background(), q); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, call := range *calls {
+		if call.body["text"] == "Кому добавить событие? Выберите один или несколько календарей." {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("calls=%+v", *calls)
 	}
 }
 
