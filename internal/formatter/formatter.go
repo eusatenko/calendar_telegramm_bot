@@ -45,8 +45,15 @@ func Combined(title string, start time.Time, people []PersonEvents) string {
 	groups, eventCounts := combinedGroups(start, people)
 	var b strings.Builder
 	b.WriteString(title)
-	for _, group := range sortedCombinedGroups(groups, func(group combinedGroup) bool { return len(group.items) >= 3 }) {
-		b.WriteString("\n\n" + combinedLine(start, group))
+	commonGroups := sortedCombinedGroups(groups, func(group combinedGroup) bool { return len(group.items) >= 3 })
+	previousParticipants := ""
+	for _, group := range commonGroups {
+		participants := combinedParticipantKey(group)
+		if participants != previousParticipants {
+			b.WriteString("\n\n" + combinedGroupName(group))
+			previousParticipants = participants
+		}
+		b.WriteString("\n" + combinedLine(start, group, false))
 	}
 	for personIndex, p := range people {
 		sectionGroups := sortedCombinedGroups(groups, func(group combinedGroup) bool {
@@ -60,7 +67,7 @@ func Combined(title string, start time.Time, people []PersonEvents) string {
 			b.WriteString("\nНет занятий")
 		} else {
 			for _, group := range sectionGroups {
-				b.WriteString("\n" + combinedLine(start, group))
+				b.WriteString("\n" + combinedLine(start, group, false))
 			}
 		}
 		if p.Error {
@@ -85,7 +92,7 @@ func CombinedChronological(title string, start time.Time, people []PersonEvents)
 			if index == 0 {
 				separator = "\n\n"
 			}
-			b.WriteString(separator + combinedLine(start, group))
+			b.WriteString(separator + combinedLine(start, group, true))
 		}
 	}
 	for _, person := range people {
@@ -178,13 +185,20 @@ func sortedCombinedGroups(groups []combinedGroup, include func(combinedGroup) bo
 	return selected
 }
 
-func combinedLine(day time.Time, group combinedGroup) string {
+func combinedLine(day time.Time, group combinedGroup, withMarkers bool) string {
 	event := group.items[0].event
-	title := addPersonMarker(group.items[0].personName, safeSummary(event.Summary))
+	title := safeSummary(event.Summary)
+	if withMarkers {
+		title = addPersonMarker(group.items[0].personName, title)
+	}
 	if len(group.items) > 1 {
 		names := make([]string, 0, len(group.items))
 		for _, item := range group.items {
-			names = append(names, personLabel(item.personName))
+			name := item.personName
+			if withMarkers {
+				name = personLabel(name)
+			}
+			names = append(names, name)
 		}
 		title = strings.Join(names, ", ") + " — " + safeSummary(group.items[0].title)
 	}
@@ -192,6 +206,14 @@ func combinedLine(day time.Time, group combinedGroup) string {
 		return "Весь день — " + title
 	}
 	return fmt.Sprintf("%s–%s %s", event.Start.In(day.Location()).Format("15:04"), event.End.In(day.Location()).Format("15:04"), title)
+}
+
+func combinedGroupName(group combinedGroup) string {
+	names := make([]string, 0, len(group.items))
+	for _, item := range group.items {
+		names = append(names, personLabel(item.personName))
+	}
+	return strings.Join(names, ", ")
 }
 
 func combinedSectionName(defaultName string, groups []combinedGroup) string {
