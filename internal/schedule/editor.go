@@ -16,6 +16,7 @@ var ErrEventNotLinked = errors.New("копии события ещё не свя
 type Writer interface {
 	Apply(ctx context.Context, calendarID string, edit googleapi.Edit) error
 	Create(ctx context.Context, calendarID string, event googleapi.Create) (string, error)
+	Delete(ctx context.Context, calendarID string, deletion googleapi.Delete) error
 }
 
 type Repository interface {
@@ -23,6 +24,8 @@ type Repository interface {
 	LinkEventCopies(actor int64, copies []storage.EventCopy) error
 	RecordEventEdit(actor int64, copyCount, failureCount int) error
 	RecordEventCreate(actor int64, copyCount, failureCount int) error
+	UnlinkEventCopies(actor int64, copies []storage.EventCopy) error
+	RecordEventDelete(actor int64, copyCount, failureCount int) error
 }
 
 type Target struct {
@@ -31,15 +34,18 @@ type Target struct {
 }
 
 type Request struct {
-	Actor         int64
-	SourceKey     string
-	SourceICalUID string
-	OriginalStart time.Time
-	Scope         googleapi.Scope
-	Summary       *string
-	Location      *string
-	Start, End    *time.Time
-	TargetKeys    []string
+	Actor          int64
+	SourceKey      string
+	SourceICalUID  string
+	OriginalStart  time.Time
+	Scope          googleapi.Scope
+	Summary        *string
+	Location       *string
+	Start, End     *time.Time
+	TargetKeys     []string
+	DirectCopies   []storage.EventCopy
+	Delete         bool
+	UnlinkOnDelete bool
 }
 
 type CreateRequest struct {
@@ -71,9 +77,13 @@ func NewCoordinator(repository Repository, writer Writer, targets []Target) *Coo
 }
 
 func (c *Coordinator) Apply(ctx context.Context, request Request) ([]CopyResult, error) {
-	copies, err := c.repository.EventGroup(request.SourceKey, request.SourceICalUID)
-	if err != nil {
-		return nil, err
+	copies := request.DirectCopies
+	if len(copies) == 0 {
+		var err error
+		copies, err = c.repository.EventGroup(request.SourceKey, request.SourceICalUID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if len(copies) == 0 {
 		return nil, ErrEventNotLinked
@@ -81,6 +91,7 @@ func (c *Coordinator) Apply(ctx context.Context, request Request) ([]CopyResult,
 	results := make([]CopyResult, 0, len(copies))
 	wanted := keySet(request.TargetKeys)
 	failures := 0
+	deleted := []storage.EventCopy{}
 	for _, copy := range copies {
 		if len(wanted) > 0 && !wanted[copy.CalendarKey] {
 			continue
@@ -91,17 +102,37 @@ func (c *Coordinator) Apply(ctx context.Context, request Request) ([]CopyResult,
 			failures++
 			continue
 		}
-		edit := googleapi.Edit{
-			ICalUID: copy.ICalUID, OriginalStart: request.OriginalStart,
-			Scope: request.Scope, Summary: request.Summary, Location: request.Location, Start: request.Start, End: request.End,
+		var applyErr error
+		if request.Delete {
+			applyErr = c.writer.Delete(ctx, target.CalendarID, googleapi.Delete{ICalUID: copy.ICalUID, OriginalStart: request.OriginalStart, Scope: request.Scope})
+		} else {
+			applyErr = c.writer.Apply(ctx, target.CalendarID, googleapi.Edit{
+				ICalUID: copy.ICalUID, OriginalStart: request.OriginalStart,
+				Scope: request.Scope, Summary: request.Summary, Location: request.Location, Start: request.Start, End: request.End,
+			})
 		}
-		applyErr := c.writer.Apply(ctx, target.CalendarID, edit)
 		if applyErr != nil {
 			failures++
-		} else if target.Invalidate != nil {
-			target.Invalidate()
+		} else {
+			if request.Delete && request.UnlinkOnDelete {
+				deleted = append(deleted, copy)
+			}
+			if target.Invalidate != nil {
+				target.Invalidate()
+			}
 		}
 		results = append(results, CopyResult{Key: target.Key, Name: target.Name, Err: applyErr})
+	}
+	if len(deleted) > 0 {
+		if err := c.repository.UnlinkEventCopies(request.Actor, deleted); err != nil {
+			return results, fmt.Errorf("очистка связей удалённых событий: %w", err)
+		}
+	}
+	if request.Delete {
+		if err := c.repository.RecordEventDelete(request.Actor, len(results), failures); err != nil {
+			return results, fmt.Errorf("журнал удаления: %w", err)
+		}
+		return results, nil
 	}
 	if err := c.repository.RecordEventEdit(request.Actor, len(results), failures); err != nil {
 		return results, fmt.Errorf("журнал изменения: %w", err)

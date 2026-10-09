@@ -171,3 +171,51 @@ func TestLinkAndLoadSingleEvent(t *testing.T) {
 		t.Fatalf("copies=%+v", got)
 	}
 }
+
+func TestActiveUserCanUnlinkDeletedSeriesCopyAndAuditDeletion(t *testing.T) {
+	s := openTest(t)
+	s.BootstrapAdmin(1)
+	if err := s.AddUser(1, 2); err != nil {
+		t.Fatal(err)
+	}
+	copies := []EventCopy{{CalendarKey: "anya", ICalUID: "uid-a"}, {CalendarKey: "lesha", ICalUID: "uid-b"}}
+	if err := s.LinkEventCopies(2, copies); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UnlinkEventCopies(2, copies[1:]); err != nil {
+		t.Fatal(err)
+	}
+	remaining, err := s.EventGroup("anya", "uid-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining) != 1 || remaining[0] != copies[0] {
+		t.Fatalf("remaining=%+v", remaining)
+	}
+	if err = s.RecordEventDelete(2, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	var action, metadata string
+	if err = s.db.QueryRow(`SELECT action,metadata FROM audit_log WHERE action='EVENT_DELETED'`).Scan(&action, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if action != "EVENT_DELETED" || metadata != `{"copy_count":1,"failure_count":0}` {
+		t.Fatalf("action=%q metadata=%q", action, metadata)
+	}
+}
+
+func TestUnauthorizedUserCannotUnlinkEventCopy(t *testing.T) {
+	s := openTest(t)
+	s.BootstrapAdmin(1)
+	copy := EventCopy{CalendarKey: "anya", ICalUID: "uid-a"}
+	if err := s.LinkEventCopies(1, []EventCopy{copy}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UnlinkEventCopies(99, []EventCopy{copy}); err == nil {
+		t.Fatal("unauthorized user unlinked an event")
+	}
+	remaining, err := s.EventGroup(copy.CalendarKey, copy.ICalUID)
+	if err != nil || len(remaining) != 1 {
+		t.Fatalf("remaining=%+v err=%v", remaining, err)
+	}
+}

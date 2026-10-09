@@ -142,10 +142,14 @@ func (s fixedSource) Events(time.Time, time.Time) ([]calendar.Event, bool, error
 	return s.events, false, nil
 }
 
-type recordingEditor struct{ calls int }
+type recordingEditor struct {
+	calls       int
+	lastRequest schedule.Request
+}
 
-func (e *recordingEditor) Apply(context.Context, schedule.Request) ([]schedule.CopyResult, error) {
+func (e *recordingEditor) Apply(_ context.Context, request schedule.Request) ([]schedule.CopyResult, error) {
 	e.calls++
+	e.lastRequest = request
 	return []schedule.CopyResult{{Key: "anya", Name: "Аня"}}, nil
 }
 func (e *recordingEditor) Create(context.Context, schedule.CreateRequest) ([]schedule.CopyResult, error) {
@@ -299,6 +303,74 @@ func TestRecurringLocationScopeIsAccepted(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("calls=%+v", *calls)
+	}
+}
+
+func TestDeleteRequiresExplicitConfirmationAndDoesNotLinkCandidates(t *testing.T) {
+	bot, store, calls := botFixture(t)
+	if err := store.BootstrapAdmin(1); err != nil {
+		t.Fatal(err)
+	}
+	editor := &recordingEditor{}
+	bot.EnableScheduleEditing(editor)
+	start := time.Date(2026, 10, 12, 18, 0, 0, 0, time.UTC)
+	token := "delete-token"
+	bot.editSessions[token] = editSession{
+		expires:      time.Now().Add(time.Minute),
+		actor:        1,
+		personKey:    "anya",
+		event:        calendar.Event{UID: "uid-a", Summary: "Танцы", Start: start, End: start.Add(time.Hour), OriginalStart: start},
+		candidates:   []storage.EventCopy{{CalendarKey: "anya", ICalUID: "uid-a"}},
+		selectedKeys: []string{"anya"},
+		targetsText:  "• Аня: Танцы",
+		needsLink:    true,
+	}
+	q := CallbackQuery{ID: "q", From: User{ID: 1}, Message: Message{MessageID: 7, Chat: Chat{ID: 1}}}
+	if err := bot.scheduleEdit(context.Background(), q, []string{"edit", "delete", token}); err != nil {
+		t.Fatal(err)
+	}
+	if editor.calls != 0 {
+		t.Fatalf("delete executed before confirmation: calls=%d", editor.calls)
+	}
+	previewFound := false
+	for _, call := range *calls {
+		if strings.Contains(fmt.Sprint(call.body["text"]), "Подтвердите удаление") {
+			previewFound = true
+		}
+	}
+	if !previewFound {
+		t.Fatalf("confirmation preview missing: calls=%+v", *calls)
+	}
+	if err := bot.scheduleEdit(context.Background(), q, []string{"edit", "confirm", token}); err != nil {
+		t.Fatal(err)
+	}
+	if editor.calls != 1 || !editor.lastRequest.Delete || editor.lastRequest.Scope != "occurrence" || !editor.lastRequest.UnlinkOnDelete {
+		t.Fatalf("calls=%d request=%+v", editor.calls, editor.lastRequest)
+	}
+	linked, err := store.EventGroup("anya", "uid-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(linked) != 0 {
+		t.Fatalf("delete unexpectedly linked candidates: %+v", linked)
+	}
+}
+
+func TestRecurringDeleteOffersOccurrenceAndSeries(t *testing.T) {
+	bot, _, calls := botFixture(t)
+	token := "recurring-delete-token"
+	bot.editSessions[token] = editSession{expires: time.Now().Add(time.Minute), actor: 1, event: calendar.Event{Recurring: true}, selectedKeys: []string{"anya"}}
+	q := CallbackQuery{ID: "q", From: User{ID: 1}, Message: Message{MessageID: 7, Chat: Chat{ID: 1}}}
+	if err := bot.scheduleEdit(context.Background(), q, []string{"edit", "delete", token}); err != nil {
+		t.Fatal(err)
+	}
+	var rendered []string
+	for _, call := range *calls {
+		rendered = append(rendered, fmt.Sprint(call.body))
+	}
+	text := strings.Join(rendered, "\n")
+	if !strings.Contains(text, "Только этот экземпляр") || !strings.Contains(text, "Всю серию") {
+		t.Fatalf("scope choices missing: %s", text)
 	}
 }
 

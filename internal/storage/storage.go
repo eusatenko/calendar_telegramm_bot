@@ -161,6 +161,37 @@ func (s *Store) RecordEventCreate(actor int64, copyCount, failureCount int) erro
 	_, err := s.db.Exec(`INSERT INTO audit_log(actor_user_id,action,created_at,metadata) VALUES(?,'EVENT_CREATED',?,?)`, actor, s.now().UTC(), fmt.Sprintf(`{"copy_count":%d,"failure_count":%d}`, copyCount, failureCount))
 	return err
 }
+
+func (s *Store) UnlinkEventCopies(actor int64, copies []EventCopy) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = requireAuthorizedTx(tx, actor); err != nil {
+		return err
+	}
+	for _, copy := range copies {
+		if copy.CalendarKey == "" || copy.ICalUID == "" {
+			return errors.New("некорректный список удалённых событий")
+		}
+		if _, err = tx.Exec(`DELETE FROM event_copies WHERE calendar_key=? AND ical_uid=?`, copy.CalendarKey, copy.ICalUID); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec(`DELETE FROM event_groups WHERE NOT EXISTS (SELECT 1 FROM event_copies WHERE event_copies.group_id=event_groups.id)`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) RecordEventDelete(actor int64, copyCount, failureCount int) error {
+	if err := s.RequireAuthorized(context.Background(), actor); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`INSERT INTO audit_log(actor_user_id,action,created_at,metadata) VALUES(?,'EVENT_DELETED',?,?)`, actor, s.now().UTC(), fmt.Sprintf(`{"copy_count":%d,"failure_count":%d}`, copyCount, failureCount))
+	return err
+}
 func (s *Store) BootstrapAdmin(id int64) error {
 	_, err := s.db.Exec(`INSERT INTO users(telegram_user_id,role,is_active,created_at) VALUES(?,?,1,?)
 ON CONFLICT(telegram_user_id) DO UPDATE SET role='admin',is_active=1`, id, "admin", s.now().UTC())

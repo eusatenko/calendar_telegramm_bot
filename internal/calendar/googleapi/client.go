@@ -43,6 +43,12 @@ type Create struct {
 	RepeatUntil *time.Time
 }
 
+type Delete struct {
+	ICalUID       string
+	OriginalStart time.Time
+	Scope         Scope
+}
+
 type Client struct {
 	http              *http.Client
 	credentials       Credentials
@@ -158,6 +164,32 @@ func (c *Client) Create(ctx context.Context, calendarID string, event Create) (s
 	return created.ICalUID, nil
 }
 
+func (c *Client) Delete(ctx context.Context, calendarID string, deletion Delete) error {
+	if deletion.ICalUID == "" || (deletion.Scope != ScopeOccurrence && deletion.Scope != ScopeSeries) {
+		return errors.New("некорректный запрос удаления")
+	}
+	parent, err := c.findParent(ctx, calendarID, deletion.ICalUID)
+	if err != nil {
+		return err
+	}
+	target := parent
+	if deletion.Scope == ScopeOccurrence && len(parent.Recurrence) > 0 {
+		if deletion.OriginalStart.IsZero() {
+			return errors.New("не задано исходное время экземпля")
+		}
+		target, err = c.findInstance(ctx, calendarID, parent.ID, deletion.OriginalStart)
+		if err != nil {
+			return err
+		}
+	}
+	headers := map[string]string{}
+	if target.ETag != "" {
+		headers["If-Match"] = target.ETag
+	}
+	path := "/calendars/" + url.PathEscape(calendarID) + "/events/" + url.PathEscape(target.ID)
+	return c.doJSON(ctx, http.MethodDelete, path, nil, headers, nil)
+}
+
 func (c *Client) findParent(ctx context.Context, calendarID, iCalUID string) (apiEvent, error) {
 	query := url.Values{"iCalUID": {iCalUID}, "showDeleted": {"false"}, "maxResults": {"50"}}
 	var response struct {
@@ -178,9 +210,9 @@ func (c *Client) findParent(ctx context.Context, calendarID, iCalUID string) (ap
 func (c *Client) findInstance(ctx context.Context, calendarID, parentID string, originalStart time.Time) (apiEvent, error) {
 	query := url.Values{
 		"showDeleted": {"false"},
-		"timeMin":     {originalStart.Add(-time.Hour).Format(time.RFC3339)},
-		"timeMax":     {originalStart.Add(time.Hour).Format(time.RFC3339)},
-		"maxResults":  {"10"},
+		"timeMin":     {originalStart.Add(-24 * time.Hour).Format(time.RFC3339)},
+		"timeMax":     {originalStart.Add(24 * time.Hour).Format(time.RFC3339)},
+		"maxResults":  {"50"},
 	}
 	var response struct {
 		Items []apiEvent `json:"items"`
@@ -190,6 +222,9 @@ func (c *Client) findInstance(ctx context.Context, calendarID, parentID string, 
 		return apiEvent{}, err
 	}
 	for _, event := range response.Items {
+		if event.OriginalStart.Date != "" && event.OriginalStart.Date == originalStart.Format("2006-01-02") {
+			return event, nil
+		}
 		candidate, err := parseDateTime(event.OriginalStart)
 		if err == nil && candidate.Equal(originalStart) {
 			return event, nil

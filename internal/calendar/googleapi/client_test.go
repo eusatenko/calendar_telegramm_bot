@@ -137,3 +137,84 @@ func TestCreateWeeklyEvent(t *testing.T) {
 		t.Fatalf("output-only fields must not be sent: %+v", body)
 	}
 }
+
+func TestDeleteSingleRecurringOccurrence(t *testing.T) {
+	var deletedPath, ifMatch string
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/token":
+			_, _ = io.WriteString(w, `{"access_token":"access","expires_in":3600}`)
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			_, _ = io.WriteString(w, `{"items":[{"id":"parent","etag":"p","iCalUID":"uid","recurrence":["RRULE:FREQ=WEEKLY"]}]}`)
+		case strings.HasSuffix(r.URL.Path, "/instances"):
+			_, _ = io.WriteString(w, `{"items":[{"id":"instance","etag":"instance-tag","recurringEventId":"parent","originalStartTime":{"dateTime":"2026-10-12T18:00:00+03:00"}}]}`)
+		case r.Method == http.MethodDelete:
+			deletedPath, ifMatch = r.URL.Path, r.Header.Get("If-Match")
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "unexpected", http.StatusBadRequest)
+		}
+	})
+	original := time.Date(2026, 10, 12, 18, 0, 0, 0, time.FixedZone("MSK", 3*60*60))
+	if err := client.Delete(context.Background(), "calendar", Delete{ICalUID: "uid", OriginalStart: original, Scope: ScopeOccurrence}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(deletedPath, "/events/instance") || ifMatch != "instance-tag" {
+		t.Fatalf("path=%s etag=%s", deletedPath, ifMatch)
+	}
+}
+
+func TestDeleteRecurringSeriesUsesParentEvent(t *testing.T) {
+	var deletedPath string
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/token":
+			_, _ = io.WriteString(w, `{"access_token":"access","expires_in":3600}`)
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			_, _ = io.WriteString(w, `{"items":[{"id":"parent","etag":"parent-tag","iCalUID":"uid","recurrence":["RRULE:FREQ=WEEKLY"]}]}`)
+		case r.Method == http.MethodDelete:
+			deletedPath = r.URL.Path
+			if r.Header.Get("If-Match") != "parent-tag" {
+				t.Fatalf("If-Match=%q", r.Header.Get("If-Match"))
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "unexpected", http.StatusBadRequest)
+		}
+	})
+	if err := client.Delete(context.Background(), "calendar", Delete{ICalUID: "uid", Scope: ScopeSeries}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(deletedPath, "/events/parent") {
+		t.Fatalf("path=%s", deletedPath)
+	}
+}
+
+func TestDeleteAllDayRecurringOccurrenceMatchesOriginalDate(t *testing.T) {
+	var deletedPath string
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/token":
+			_, _ = io.WriteString(w, `{"access_token":"access","expires_in":3600}`)
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			_, _ = io.WriteString(w, `{"items":[{"id":"parent","iCalUID":"uid","recurrence":["RRULE:FREQ=WEEKLY"]}]}`)
+		case strings.HasSuffix(r.URL.Path, "/instances"):
+			_, _ = io.WriteString(w, `{"items":[{"id":"all-day-instance","originalStartTime":{"date":"2026-10-12"}}]}`)
+		case r.Method == http.MethodDelete:
+			deletedPath = r.URL.Path
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "unexpected", http.StatusBadRequest)
+		}
+	})
+	original := time.Date(2026, 10, 12, 0, 0, 0, 0, time.FixedZone("MSK", 3*60*60))
+	if err := client.Delete(context.Background(), "calendar", Delete{ICalUID: "uid", OriginalStart: original, Scope: ScopeOccurrence}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(deletedPath, "/events/all-day-instance") {
+		t.Fatalf("path=%s", deletedPath)
+	}
+}

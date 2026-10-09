@@ -125,6 +125,32 @@ func (b *Bot) scheduleEdit(ctx context.Context, q CallbackQuery, parts []string)
 			return b.edit(ctx, q, "Сеанс устарел. Выберите событие заново.", editBackMenu())
 		}
 		return b.promptEditInput(ctx, q, parts[2], parts[3], googleapi.Scope(parts[4]))
+	case "delete":
+		if len(parts) != 3 {
+			return b.invalid(ctx, q)
+		}
+		session, ok := b.editSession(q.From.ID, parts[2])
+		if !ok {
+			return b.edit(ctx, q, "Сеанс устарел. Выберите событие заново.", editBackMenu())
+		}
+		if session.event.Recurring {
+			markup := Markup{InlineKeyboard: [][]Button{
+				{{Text: "Только этот экземпляр", CallbackData: "edit:delete_scope:" + parts[2] + ":occurrence"}},
+				{{Text: "Всю серию", CallbackData: "edit:delete_scope:" + parts[2] + ":series"}},
+				{{Text: "Назад", CallbackData: "edit:event:" + parts[2]}},
+			}}
+			return b.edit(ctx, q, "Что удалить у отмеченных календарей?", markup)
+		}
+		return b.prepareDelete(ctx, q, parts[2], session, googleapi.ScopeOccurrence)
+	case "delete_scope":
+		if len(parts) != 4 || (parts[3] != string(googleapi.ScopeOccurrence) && parts[3] != string(googleapi.ScopeSeries)) {
+			return b.invalid(ctx, q)
+		}
+		session, ok := b.editSession(q.From.ID, parts[2])
+		if !ok {
+			return b.edit(ctx, q, "Сеанс устарел. Выберите событие заново.", editBackMenu())
+		}
+		return b.prepareDelete(ctx, q, parts[2], session, googleapi.Scope(parts[3]))
 	case "confirm":
 		if len(parts) != 3 {
 			return b.invalid(ctx, q)
@@ -133,7 +159,8 @@ func (b *Bot) scheduleEdit(ctx context.Context, q CallbackQuery, parts []string)
 		if !ok || session.pending == nil {
 			return b.edit(ctx, q, "Сеанс устарел. Выберите событие заново.", editBackMenu())
 		}
-		if session.needsLink {
+		isDelete := session.pending.Delete
+		if session.needsLink && !isDelete {
 			if err := b.store.LinkEventCopies(q.From.ID, session.candidates); err != nil {
 				return err
 			}
@@ -149,7 +176,11 @@ func (b *Bot) scheduleEdit(ctx context.Context, q CallbackQuery, parts []string)
 		}
 		session.pending = nil
 		b.saveEditSession(parts[2], session)
-		return b.edit(ctx, q, b.formatEditResults(q.From.ID, results), editBackMenu())
+		heading := "Изменение завершено:"
+		if isDelete {
+			heading = "Удаление завершено:"
+		}
+		return b.edit(ctx, q, b.formatCopyResults(q.From.ID, heading, results), editBackMenu())
 	default:
 		return b.invalid(ctx, q)
 	}
@@ -280,10 +311,34 @@ func (b *Bot) showEditActions(ctx context.Context, q CallbackQuery, token string
 	rows = append(rows,
 		[]Button{{Text: "Изменить название", CallbackData: "edit:field:" + token + ":title"}},
 		[]Button{{Text: "Изменить место", CallbackData: "edit:field:" + token + ":location"}},
+		[]Button{{Text: "Удалить событие", CallbackData: "edit:delete:" + token}},
 		[]Button{{Text: "Назад", CallbackData: "edit:menu"}},
 	)
 	markup := Markup{InlineKeyboard: rows}
 	text := eventDescription(session.event, b.loc) + "\n\nБудет применено к:\n" + session.targetsText + "\n\nЧто изменить?"
+	return b.edit(ctx, q, text, markup)
+}
+
+func (b *Bot) prepareDelete(ctx context.Context, q CallbackQuery, token string, session editSession, scope googleapi.Scope) error {
+	if len(session.selectedKeys) == 0 {
+		return b.showEditTargets(ctx, q, token, session, "Выберите хотя бы один календарь.")
+	}
+	if scope == googleapi.ScopeSeries && !session.event.Recurring {
+		return b.invalid(ctx, q)
+	}
+	request := schedule.Request{
+		Actor: q.From.ID, SourceKey: session.personKey, SourceICalUID: session.event.UID,
+		OriginalStart: session.event.OriginalStart, Scope: scope, TargetKeys: session.selectedKeys,
+		DirectCopies: session.candidates, Delete: true, UnlinkOnDelete: !session.event.Recurring || scope == googleapi.ScopeSeries,
+	}
+	session.pending = &request
+	b.saveEditSession(token, session)
+	area := "выбранное событие"
+	if scope == googleapi.ScopeSeries {
+		area = "всю повторяющуюся серию"
+	}
+	text := "Подтвердите удаление:\n\n" + eventDescription(session.event, b.loc) + "\nУдалить: " + area + "\nВ календарях:\n" + session.targetsText
+	markup := Markup{InlineKeyboard: [][]Button{{{Text: "Подтвердить удаление", CallbackData: "edit:confirm:" + token}}, {{Text: "Отмена", CallbackData: "edit:event:" + token}}}}
 	return b.edit(ctx, q, text, markup)
 }
 
