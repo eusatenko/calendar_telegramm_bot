@@ -12,7 +12,7 @@ func TestDayAllDayFirstRussian(t *testing.T) {
 	d := time.Date(2026, 9, 7, 0, 0, 0, 0, loc)
 	events := []calendar.Event{{Summary: "Шахматы", Start: d.Add(18 * time.Hour), End: d.Add(19 * time.Hour)}, {Summary: "Каникулы", Start: d, End: d.AddDate(0, 0, 1), AllDay: true}}
 	got := Day("Аня", d, events, false)
-	want := "Аня — понедельник, 7 сентября\n\nВесь день — Каникулы\n18:00–19:00 Шахматы"
+	want := "🟠 Аня — понедельник, 7 сентября\n\nВесь день — Каникулы\n18:00–19:00 Шахматы"
 	if got != want {
 		t.Fatalf("%q", got)
 	}
@@ -48,7 +48,7 @@ func TestCombinedMergesMatchingEventsAndOmitsConsumedSection(t *testing.T) {
 		{Name: "Саша", Events: []calendar.Event{event("Саша — Бассейн", 9, 0, 45), event("Саша — Современный", 13, 0, 60), event("Саша — Репертуар", 14, 30, 60)}},
 		{Name: "Настя", Events: []calendar.Event{event("Настя — спираль", 10, 0, 60)}},
 	})
-	want := "Завтра — расписание всех\n\n09:00–09:45 Аня, Лёша, Саша — Бассейн\n\nАня\n11:50–12:50 Аня — Современный\n13:20–14:20 Аня — Репертуар\n\nЛёша, Саша\n13:00–14:00 Лёша, Саша — Современный\n14:30–15:30 Лёша, Саша — Репертуар\n\nНастя\n10:00–11:00 Настя — спираль"
+	want := "Завтра — расписание всех\n\n09:00–09:45 🟠 Аня, 🟣 Лёша, 🔴 Саша — Бассейн\n\n🟠 Аня\n11:50–12:50 🟠 Аня — Современный\n13:20–14:20 🟠 Аня — Репертуар\n\n🟣 Лёша, 🔴 Саша\n13:00–14:00 🟣 Лёша, 🔴 Саша — Современный\n14:30–15:30 🟣 Лёша, 🔴 Саша — Репертуар\n\n⚪ Настя\n10:00–11:00 ⚪ Настя — спираль"
 	if got != want {
 		t.Fatalf("got:\n%s\n\nwant:\n%s", got, want)
 	}
@@ -80,7 +80,7 @@ func TestCombinedKeepsPersonalHeaderForMixedSection(t *testing.T) {
 		{Name: "Лёша", Events: []calendar.Event{{Summary: "Лёша — Танцы", Start: sharedStart, End: sharedStart.Add(time.Hour)}, {Summary: "Лёша — Шахматы", Start: d.Add(12 * time.Hour), End: d.Add(13 * time.Hour)}}},
 		{Name: "Саша", Events: []calendar.Event{{Summary: "Саша — Танцы", Start: sharedStart, End: sharedStart.Add(time.Hour)}}},
 	})
-	if strings.Contains(got, "\n\nЛёша, Саша\n") || !strings.Contains(got, "\n\nЛёша\n") {
+	if strings.Contains(got, "\n\n🟣 Лёша, 🔴 Саша\n") || !strings.Contains(got, "\n\n🟣 Лёша\n") {
 		t.Fatal(got)
 	}
 }
@@ -96,7 +96,7 @@ func TestCombinedChronologicalMergesAndSortsAllEvents(t *testing.T) {
 		{Name: "Лёша", Events: []calendar.Event{event("Лёша — Бассейн", 9, 0, 45), event("Лёша — Репертуар", 14, 30, 60)}},
 		{Name: "Настя", Events: []calendar.Event{event("Настя — спираль", 10, 0, 60)}},
 	})
-	want := "Завтра — расписание всех\n\n09:00–09:45 Аня, Лёша — Бассейн\n10:00–11:00 Настя — спираль\n11:50–12:50 Аня — Современный\n14:30–15:30 Лёша — Репертуар"
+	want := "Завтра — расписание всех\n\n09:00–09:45 🟠 Аня, 🟣 Лёша — Бассейн\n10:00–11:00 ⚪ Настя — спираль\n11:50–12:50 🟠 Аня — Современный\n14:30–15:30 🟣 Лёша — Репертуар"
 	if got != want {
 		t.Fatalf("got:\n%s\n\nwant:\n%s", got, want)
 	}

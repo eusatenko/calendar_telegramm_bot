@@ -15,7 +15,7 @@ var months = []string{"", "января", "февраля", "марта", "ап�
 
 func Day(person string, dayStart time.Time, events []calendar.Event, stale bool) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s — %s, %d %s\n\n", person, weekdays[dayStart.Weekday()], dayStart.Day(), months[dayStart.Month()])
+	fmt.Fprintf(&b, "%s — %s, %d %s\n\n", personLabel(person), weekdays[dayStart.Weekday()], dayStart.Day(), months[dayStart.Month()])
 	b.WriteString(dayLines(dayStart, events))
 	if stale {
 		b.WriteString("\n\n⚠️ Данные могут быть неактуальны: не удалось обновить календарь.")
@@ -27,9 +27,9 @@ func Week(person string, start time.Time, events []calendar.Event, stale bool) s
 	end := start.AddDate(0, 0, 6)
 	var b strings.Builder
 	if start.Month() == end.Month() {
-		fmt.Fprintf(&b, "%s — %d–%d %s", person, start.Day(), end.Day(), months[end.Month()])
+		fmt.Fprintf(&b, "%s — %d–%d %s", personLabel(person), start.Day(), end.Day(), months[end.Month()])
 	} else {
-		fmt.Fprintf(&b, "%s — %d %s – %d %s", person, start.Day(), months[start.Month()], end.Day(), months[end.Month()])
+		fmt.Fprintf(&b, "%s — %d %s – %d %s", personLabel(person), start.Day(), months[start.Month()], end.Day(), months[end.Month()])
 	}
 	for i := 0; i < 7; i++ {
 		day := start.AddDate(0, 0, i)
@@ -90,9 +90,9 @@ func CombinedChronological(title string, start time.Time, people []PersonEvents)
 	}
 	for _, person := range people {
 		if person.Error {
-			b.WriteString("\n⚠️ " + person.Name + ": не удалось получить расписание.")
+			b.WriteString("\n⚠️ " + personLabel(person.Name) + ": не удалось получить расписание.")
 		} else if person.Stale {
-			b.WriteString("\n⚠️ " + person.Name + ": данные могут быть неактуальны.")
+			b.WriteString("\n⚠️ " + personLabel(person.Name) + ": данные могут быть неактуальны.")
 		}
 	}
 	return b.String()
@@ -180,11 +180,11 @@ func sortedCombinedGroups(groups []combinedGroup, include func(combinedGroup) bo
 
 func combinedLine(day time.Time, group combinedGroup) string {
 	event := group.items[0].event
-	title := safeSummary(event.Summary)
+	title := addPersonMarker(group.items[0].personName, safeSummary(event.Summary))
 	if len(group.items) > 1 {
 		names := make([]string, 0, len(group.items))
 		for _, item := range group.items {
-			names = append(names, item.personName)
+			names = append(names, personLabel(item.personName))
 		}
 		title = strings.Join(names, ", ") + " — " + safeSummary(group.items[0].title)
 	}
@@ -196,19 +196,50 @@ func combinedLine(day time.Time, group combinedGroup) string {
 
 func combinedSectionName(defaultName string, groups []combinedGroup) string {
 	if len(groups) == 0 || len(groups[0].items) < 2 {
-		return defaultName
+		return personLabel(defaultName)
 	}
 	want := combinedParticipantKey(groups[0])
 	for _, group := range groups[1:] {
 		if len(group.items) < 2 || combinedParticipantKey(group) != want {
-			return defaultName
+			return personLabel(defaultName)
 		}
 	}
 	names := make([]string, 0, len(groups[0].items))
 	for _, item := range groups[0].items {
-		names = append(names, item.personName)
+		names = append(names, personLabel(item.personName))
 	}
 	return strings.Join(names, ", ")
+}
+
+func personLabel(name string) string {
+	marker := personMarker(name)
+	if marker == "" {
+		return name
+	}
+	return marker + " " + name
+}
+
+func addPersonMarker(personName, title string) string {
+	marker := personMarker(personName)
+	if marker == "" {
+		return title
+	}
+	return marker + " " + title
+}
+
+func personMarker(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "аня":
+		return "🟠"
+	case "лёша", "леша":
+		return "🟣"
+	case "настя":
+		return "⚪"
+	case "саша":
+		return "🔴"
+	default:
+		return ""
+	}
 }
 
 func combinedParticipantKey(group combinedGroup) string {
