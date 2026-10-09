@@ -10,8 +10,10 @@ import (
 
 	"github.com/eusatenko/calendar_telegramm_bot/internal/calendar/cache"
 	"github.com/eusatenko/calendar_telegramm_bot/internal/calendar/fetcher"
+	"github.com/eusatenko/calendar_telegramm_bot/internal/calendar/googleapi"
 	calendarical "github.com/eusatenko/calendar_telegramm_bot/internal/calendar/ical"
 	"github.com/eusatenko/calendar_telegramm_bot/internal/config"
+	"github.com/eusatenko/calendar_telegramm_bot/internal/schedule"
 	"github.com/eusatenko/calendar_telegramm_bot/internal/storage"
 	"github.com/eusatenko/calendar_telegramm_bot/internal/telegram"
 )
@@ -35,6 +37,7 @@ func main() {
 	}
 	f := fetcher.New(cfg.HTTPTimeout)
 	people := make([]telegram.Person, 0, len(cfg.Calendars))
+	targets := make([]schedule.Target, 0, len(cfg.Calendars))
 	for _, cc := range cfg.Calendars {
 		c := cc
 		src := cache.New(cfg.CacheTTL, func() (*calendarical.Calendar, error) {
@@ -48,6 +51,9 @@ func main() {
 			return cal, e
 		})
 		people = append(people, telegram.Person{Key: c.Key, Name: c.Name, Source: src})
+		if cfg.GoogleEditing.Enabled {
+			targets = append(targets, schedule.Target{Key: c.Key, Name: c.Name, CalendarID: c.GoogleID, Invalidate: src.Invalidate})
+		}
 	}
 	client := telegram.NewClient(cfg.BotToken)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -58,7 +64,13 @@ func main() {
 		os.Exit(1)
 	}
 	log.Info("bot started", "timezone", cfg.TimezoneName)
-	if err = telegram.NewBot(client, store, people, cfg.Timezone, cfg.InviteTTL, username, log).Run(ctx); err != nil && ctx.Err() == nil {
+	bot := telegram.NewBot(client, store, people, cfg.Timezone, cfg.InviteTTL, username, log)
+	if cfg.GoogleEditing.Enabled {
+		writer := googleapi.New(googleapi.Credentials{ClientID: cfg.GoogleEditing.ClientID, ClientSecret: cfg.GoogleEditing.ClientSecret, RefreshToken: cfg.GoogleEditing.RefreshToken}, cfg.HTTPTimeout)
+		bot.EnableScheduleEditing(schedule.NewCoordinator(store, writer, targets))
+		log.Info("calendar editing enabled")
+	}
+	if err = bot.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Error("bot stopped", "error", err)
 		os.Exit(1)
 	}

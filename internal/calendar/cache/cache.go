@@ -74,3 +74,11 @@ func (s *Source) Events(from, to time.Time) ([]calendar.Event, bool, error) {
 	}
 	return events, err != nil, nil
 }
+
+// Invalidate forces the next read to refresh the source. Existing data remains
+// available as stale fallback if that refresh fails.
+func (s *Source) Invalidate() {
+	s.mu.Lock()
+	s.fetchedAt = time.Time{}
+	s.mu.Unlock()
+}

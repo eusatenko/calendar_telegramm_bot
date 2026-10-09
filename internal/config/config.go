@@ -9,19 +9,27 @@ import (
 )
 
 type Calendar struct {
-	Key, Name, URL string
+	Key, Name, URL, GoogleID string
+}
+
+type GoogleEditing struct {
+	Enabled      bool
+	ClientID     string
+	ClientSecret string
+	RefreshToken string
 }
 
 type Config struct {
-	BotToken     string
-	AdminID      int64
-	Timezone     *time.Location
-	TimezoneName string
-	DatabasePath string
-	CacheTTL     time.Duration
-	HTTPTimeout  time.Duration
-	InviteTTL    time.Duration
-	Calendars    []Calendar
+	BotToken      string
+	AdminID       int64
+	Timezone      *time.Location
+	TimezoneName  string
+	DatabasePath  string
+	CacheTTL      time.Duration
+	HTTPTimeout   time.Duration
+	InviteTTL     time.Duration
+	Calendars     []Calendar
+	GoogleEditing GoogleEditing
 }
 
 func Load() (Config, error) {
@@ -51,16 +59,46 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	c.Calendars = []Calendar{
-		{"anya", "Аня", os.Getenv("CALENDAR_ANYA_ICAL_URL")},
-		{"lesha", "Лёша", os.Getenv("CALENDAR_LESHA_ICAL_URL")},
-		{"sasha", "Саша", os.Getenv("CALENDAR_SASHA_ICAL_URL")},
-		{"nastya", "Настя", os.Getenv("CALENDAR_NASTYA_ICAL_URL")},
+		{"anya", "Аня", os.Getenv("CALENDAR_ANYA_ICAL_URL"), os.Getenv("GOOGLE_CALENDAR_ANYA_ID")},
+		{"lesha", "Лёша", os.Getenv("CALENDAR_LESHA_ICAL_URL"), os.Getenv("GOOGLE_CALENDAR_LESHA_ID")},
+		{"sasha", "Саша", os.Getenv("CALENDAR_SASHA_ICAL_URL"), os.Getenv("GOOGLE_CALENDAR_SASHA_ID")},
+		{"nastya", "Настя", os.Getenv("CALENDAR_NASTYA_ICAL_URL"), os.Getenv("GOOGLE_CALENDAR_NASTYA_ID")},
 	}
 	for _, cal := range c.Calendars {
 		u, parseErr := url.Parse(cal.URL)
 		if cal.URL == "" || parseErr != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
 			return Config{}, fmt.Errorf("CALENDAR_%s_ICAL_URL должен быть валидным HTTPS URL", cal.Key)
 		}
+	}
+	c.GoogleEditing = GoogleEditing{
+		ClientID:     os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
+		ClientSecret: os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
+		RefreshToken: os.Getenv("GOOGLE_OAUTH_REFRESH_TOKEN"),
+	}
+	editingEnabled := false
+	if raw := os.Getenv("CALENDAR_EDITING_ENABLED"); raw != "" {
+		editingEnabled, err = strconv.ParseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("CALENDAR_EDITING_ENABLED должен быть true или false")
+		}
+	}
+	editingValues := []string{c.GoogleEditing.ClientID, c.GoogleEditing.ClientSecret, c.GoogleEditing.RefreshToken}
+	configured := 0
+	for _, v := range editingValues {
+		if v != "" {
+			configured++
+		}
+	}
+	for _, cal := range c.Calendars {
+		if cal.GoogleID != "" {
+			configured++
+		}
+	}
+	if editingEnabled {
+		if configured != len(editingValues)+len(c.Calendars) {
+			return Config{}, fmt.Errorf("для редактирования нужно задать все GOOGLE_OAUTH_* и GOOGLE_*_CALENDAR_ID")
+		}
+		c.GoogleEditing.Enabled = true
 	}
 	return c, nil
 }

@@ -120,3 +120,25 @@ func TestDatabasePermissions(t *testing.T) {
 		t.Fatalf("mode=%o", info.Mode().Perm())
 	}
 }
+
+func TestLinkAndLoadEventCopies(t *testing.T) {
+	s := openTest(t)
+	s.BootstrapAdmin(1)
+	copies := []EventCopy{{CalendarKey: "anya", ICalUID: "uid-a"}, {CalendarKey: "lesha", ICalUID: "uid-b"}}
+	if err := s.LinkEventCopies(1, copies); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.EventGroup("anya", "uid-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].CalendarKey != "anya" || got[1].ICalUID != "uid-b" {
+		t.Fatalf("copies=%+v", got)
+	}
+	if err = s.LinkEventCopies(1, copies); err == nil {
+		t.Fatal("duplicate event was linked twice")
+	}
+	if err = s.LinkEventCopies(2, []EventCopy{{CalendarKey: "sasha", ICalUID: "x"}, {CalendarKey: "nastya", ICalUID: "y"}}); err == nil {
+		t.Fatal("non-admin linked events")
+	}
+}

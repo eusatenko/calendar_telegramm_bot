@@ -55,6 +55,7 @@ func (s *Store) migrate() error {
 	_, err := s.db.Exec(`
 CREATE TABLE IF NOT EXISTS schema_version(version INTEGER PRIMARY KEY);
 INSERT OR IGNORE INTO schema_version(version) VALUES(1);
+INSERT OR IGNORE INTO schema_version(version) VALUES(2);
 CREATE TABLE IF NOT EXISTS users(
  telegram_user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT,
  role TEXT NOT NULL CHECK(role IN ('admin','user')), is_active INTEGER NOT NULL CHECK(is_active IN (0,1)),
@@ -68,7 +69,88 @@ CREATE TABLE IF NOT EXISTS audit_log(
  id INTEGER PRIMARY KEY AUTOINCREMENT, actor_user_id INTEGER, action TEXT NOT NULL,
  target_user_id INTEGER, created_at DATETIME NOT NULL, metadata TEXT);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+CREATE TABLE IF NOT EXISTS event_groups(
+ id INTEGER PRIMARY KEY AUTOINCREMENT, created_at DATETIME NOT NULL, created_by INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS event_copies(
+ group_id INTEGER NOT NULL REFERENCES event_groups(id) ON DELETE CASCADE,
+ calendar_key TEXT NOT NULL, ical_uid TEXT NOT NULL,
+ PRIMARY KEY(calendar_key,ical_uid), UNIQUE(group_id,calendar_key));
+CREATE INDEX IF NOT EXISTS idx_event_copies_group ON event_copies(group_id);
 `)
+	return err
+}
+
+type EventCopy struct {
+	CalendarKey string
+	ICalUID     string
+}
+
+// EventGroup returns all copies linked to the selected calendar event.
+func (s *Store) EventGroup(calendarKey, iCalUID string) ([]EventCopy, error) {
+	rows, err := s.db.Query(`SELECT linked.calendar_key,linked.ical_uid
+FROM event_copies selected
+JOIN event_copies linked ON linked.group_id=selected.group_id
+WHERE selected.calendar_key=? AND selected.ical_uid=?
+ORDER BY linked.calendar_key`, calendarKey, iCalUID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var copies []EventCopy
+	for rows.Next() {
+		var copy EventCopy
+		if err = rows.Scan(&copy.CalendarKey, &copy.ICalUID); err != nil {
+			return nil, err
+		}
+		copies = append(copies, copy)
+	}
+	return copies, rows.Err()
+}
+
+// LinkEventCopies creates one logical event group. A physical event can belong
+// to only one group and a group can contain at most one copy per calendar.
+func (s *Store) LinkEventCopies(actor int64, copies []EventCopy) error {
+	if len(copies) < 2 {
+		return errors.New("для связи нужно минимум две копии")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = requireAdminTx(tx, actor); err != nil {
+		return err
+	}
+	result, err := tx.Exec(`INSERT INTO event_groups(created_at,created_by) VALUES(?,?)`, s.now().UTC(), actor)
+	if err != nil {
+		return err
+	}
+	groupID, err := result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, copy := range copies {
+		if copy.CalendarKey == "" || copy.ICalUID == "" || seen[copy.CalendarKey] {
+			return errors.New("некорректный список копий")
+		}
+		seen[copy.CalendarKey] = true
+		if _, err = tx.Exec(`INSERT INTO event_copies(group_id,calendar_key,ical_uid) VALUES(?,?,?)`, groupID, copy.CalendarKey, copy.ICalUID); err != nil {
+			return fmt.Errorf("связь копий: %w", err)
+		}
+	}
+	_, err = tx.Exec(`INSERT INTO audit_log(actor_user_id,action,created_at,metadata) VALUES(?,'EVENT_COPIES_LINKED',?,?)`, actor, s.now().UTC(), fmt.Sprintf(`{"group_id":%d,"copy_count":%d}`, groupID, len(copies)))
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) RecordEventEdit(actor int64, copyCount, failureCount int) error {
+	if err := s.RequireAdmin(context.Background(), actor); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`INSERT INTO audit_log(actor_user_id,action,created_at,metadata) VALUES(?,'EVENT_EDITED',?,?)`, actor, s.now().UTC(), fmt.Sprintf(`{"copy_count":%d,"failure_count":%d}`, copyCount, failureCount))
 	return err
 }
 func (s *Store) BootstrapAdmin(id int64) error {

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eusatenko/calendar_telegramm_bot/internal/calendar"
 	"github.com/eusatenko/calendar_telegramm_bot/internal/storage"
 )
 
@@ -90,5 +91,51 @@ func TestMenusHideAdminForUser(t *testing.T) {
 	}
 	if !strings.Contains(string(admin), "Управление доступом") {
 		t.Fatal("admin button missing")
+	}
+}
+
+func TestEditingButtonIsFeatureGated(t *testing.T) {
+	disabled, _ := json.Marshal(adminMenu(false))
+	enabled, _ := json.Marshal(adminMenu(true))
+	if strings.Contains(string(disabled), "Изменить расписание") {
+		t.Fatal("editing button visible while disabled")
+	}
+	if !strings.Contains(string(enabled), "Изменить расписание") {
+		t.Fatal("editing button missing while enabled")
+	}
+}
+
+type fixedSource struct{ events []calendar.Event }
+
+func (s fixedSource) Events(time.Time, time.Time) ([]calendar.Event, bool, error) {
+	return s.events, false, nil
+}
+
+func TestFindMatchingCopiesUsesExactTitleAndInterval(t *testing.T) {
+	bot, _, _ := botFixture(t)
+	start := time.Date(2026, 10, 12, 18, 0, 0, 0, time.UTC)
+	selected := calendar.Event{UID: "a", Summary: "Шахматы", Start: start, End: start.Add(time.Hour), Recurring: true, OriginalStart: start}
+	bot.people = map[string]Person{
+		"anya":  {Key: "anya", Name: "Аня", Source: fixedSource{[]calendar.Event{selected}}},
+		"lesha": {Key: "lesha", Name: "Лёша", Source: fixedSource{[]calendar.Event{{UID: "b", Summary: "Шахматы", Start: start, End: start.Add(time.Hour), Recurring: true, OriginalStart: start}}}},
+		"sasha": {Key: "sasha", Name: "Саша", Source: fixedSource{[]calendar.Event{{UID: "c", Summary: "Шахматы", Start: start.Add(time.Hour), End: start.Add(2 * time.Hour), Recurring: true}}}},
+	}
+	bot.order = []string{"anya", "lesha", "sasha"}
+	copies, err := bot.findMatchingCopies(editSession{personKey: "anya", event: selected})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(copies) != 2 || copies[0].ICalUID != "a" || copies[1].ICalUID != "b" {
+		t.Fatalf("copies=%+v", copies)
+	}
+}
+
+func TestParseTimeRangeSupportsOvernight(t *testing.T) {
+	start, end, err := parseTimeRange("23:30–01:00", time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC), time.UTC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start.Format("2006-01-02 15:04") != "2026-10-12 23:30" || end.Format("2006-01-02 15:04") != "2026-10-13 01:00" {
+		t.Fatalf("%v - %v", start, end)
 	}
 }

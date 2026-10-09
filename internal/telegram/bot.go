@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/eusatenko/calendar_telegramm_bot/internal/calendar"
+	"github.com/eusatenko/calendar_telegramm_bot/internal/calendar/googleapi"
 	"github.com/eusatenko/calendar_telegramm_bot/internal/formatter"
+	"github.com/eusatenko/calendar_telegramm_bot/internal/schedule"
 	"github.com/eusatenko/calendar_telegramm_bot/internal/storage"
 )
 
@@ -19,18 +21,35 @@ type Person struct {
 	Key, Name string
 	Source    calendar.Source
 }
-type inputState struct{ expires time.Time }
+type inputState struct {
+	expires     time.Time
+	kind, token string
+	scope       googleapi.Scope
+}
+type editSession struct {
+	expires    time.Time
+	actor      int64
+	personKey  string
+	event      calendar.Event
+	candidates []storage.EventCopy
+	pending    *schedule.Request
+}
+type ScheduleEditor interface {
+	Apply(context.Context, schedule.Request) ([]schedule.CopyResult, error)
+}
 type Bot struct {
-	client    *Client
-	store     *storage.Store
-	people    map[string]Person
-	order     []string
-	loc       *time.Location
-	inviteTTL time.Duration
-	username  string
-	log       *slog.Logger
-	mu        sync.Mutex
-	awaiting  map[int64]inputState
+	client       *Client
+	store        *storage.Store
+	people       map[string]Person
+	order        []string
+	loc          *time.Location
+	inviteTTL    time.Duration
+	username     string
+	log          *slog.Logger
+	mu           sync.Mutex
+	awaiting     map[int64]inputState
+	editor       ScheduleEditor
+	editSessions map[string]editSession
 }
 
 func NewBot(client *Client, store *storage.Store, people []Person, loc *time.Location, inviteTTL time.Duration, username string, log *slog.Logger) *Bot {
@@ -40,8 +59,10 @@ func NewBot(client *Client, store *storage.Store, people []Person, loc *time.Loc
 		m[p.Key] = p
 		order = append(order, p.Key)
 	}
-	return &Bot{client: client, store: store, people: m, order: order, loc: loc, inviteTTL: inviteTTL, username: username, log: log, awaiting: map[int64]inputState{}}
+	return &Bot{client: client, store: store, people: m, order: order, loc: loc, inviteTTL: inviteTTL, username: username, log: log, awaiting: map[int64]inputState{}, editSessions: map[string]editSession{}}
 }
+
+func (b *Bot) EnableScheduleEditing(editor ScheduleEditor) { b.editor = editor }
 
 func (b *Bot) Run(ctx context.Context) error {
 	offset := 0
@@ -99,11 +120,14 @@ func (b *Bot) handleMessage(ctx context.Context, m Message) error {
 	_ = b.store.Touch(m.From.ID, m.From.Username, m.From.FirstName)
 	if m.Text == "/cancel" {
 		b.clearAwaiting(m.From.ID)
-		return b.client.Send(ctx, m.Chat.ID, "Действие отменено.", adminMenu())
+		return b.client.Send(ctx, m.Chat.ID, "Действие отменено.", adminMenu(b.editor != nil))
 	}
-	if b.isAwaiting(m.From.ID) {
+	if state, ok := b.awaitingState(m.From.ID); ok {
 		if !admin {
 			return b.client.Send(ctx, m.Chat.ID, "Недостаточно прав.", mainMenu(false))
+		}
+		if state.kind != "add_user" {
+			return b.handleEditInput(ctx, m, state)
 		}
 		id, e := strconv.ParseInt(strings.TrimSpace(m.Text), 10, 64)
 		if e != nil || id <= 0 {
@@ -116,7 +140,7 @@ func (b *Bot) handleMessage(ctx context.Context, m Message) error {
 			return e
 		}
 		b.clearAwaiting(m.From.ID)
-		return b.client.Send(ctx, m.Chat.ID, fmt.Sprintf("Пользователь %d добавлен или активирован.", id), adminMenu())
+		return b.client.Send(ctx, m.Chat.ID, fmt.Sprintf("Пользователь %d добавлен или активирован.", id), adminMenu(b.editor != nil))
 	}
 	return b.client.Send(ctx, m.Chat.ID, "Семейное расписание", mainMenu(admin))
 }
@@ -160,6 +184,14 @@ func (b *Bot) handleCallback(ctx context.Context, q CallbackQuery) error {
 			return b.denied(ctx, q)
 		}
 		return b.admin(ctx, q, parts)
+	case "edit":
+		if !admin || b.editor == nil {
+			return b.denied(ctx, q)
+		}
+		if err = b.store.RequireAdmin(ctx, q.From.ID); err != nil {
+			return b.denied(ctx, q)
+		}
+		return b.scheduleEdit(ctx, q, parts)
 	default:
 		return b.invalid(ctx, q)
 	}
@@ -220,7 +252,7 @@ func (b *Bot) admin(ctx context.Context, q CallbackQuery, p []string) error {
 	switch p[1] {
 	case "menu":
 		b.clearAwaiting(q.From.ID)
-		return b.edit(ctx, q, "Управление доступом", adminMenu())
+		return b.edit(ctx, q, "Управление доступом", adminMenu(b.editor != nil))
 	case "users":
 		users, e := b.store.ListUsers()
 		if e != nil {
@@ -252,7 +284,7 @@ func (b *Bot) admin(ctx context.Context, q CallbackQuery, p []string) error {
 		return b.editSplit(ctx, q, sb.String(), keys)
 	case "add":
 		b.mu.Lock()
-		b.awaiting[q.From.ID] = inputState{expires: time.Now().Add(5 * time.Minute)}
+		b.awaiting[q.From.ID] = inputState{expires: time.Now().Add(5 * time.Minute), kind: "add_user"}
 		b.mu.Unlock()
 		return b.edit(ctx, q, "Отправьте числовой Telegram ID пользователя. Ожидание действует 5 минут.", cancelMenu())
 	case "invite":
@@ -261,7 +293,7 @@ func (b *Bot) admin(ctx context.Context, q CallbackQuery, p []string) error {
 			return e
 		}
 		link := fmt.Sprintf("https://t.me/%s?start=invite_%s", b.username, token)
-		return b.edit(ctx, q, "Одноразовое приглашение действительно "+b.inviteTTL.String()+":\n\n"+link, adminMenu())
+		return b.edit(ctx, q, "Одноразовое приглашение действительно "+b.inviteTTL.String()+":\n\n"+link, adminMenu(b.editor != nil))
 	case "toggle":
 		if len(p) != 4 {
 			return b.invalid(ctx, q)
@@ -272,12 +304,12 @@ func (b *Bot) admin(ctx context.Context, q CallbackQuery, p []string) error {
 		}
 		e = b.store.SetActive(q.From.ID, id, p[3] == "on")
 		if errors.Is(e, storage.ErrLastAdmin) {
-			return b.edit(ctx, q, "Нельзя отключить последнего активного администратора.", adminMenu())
+			return b.edit(ctx, q, "Нельзя отключить последнего активного администратора.", adminMenu(b.editor != nil))
 		}
 		if e != nil {
 			return e
 		}
-		return b.edit(ctx, q, "Статус пользователя обновлён.", adminMenu())
+		return b.edit(ctx, q, "Статус пользователя обновлён.", adminMenu(b.editor != nil))
 	default:
 		return b.invalid(ctx, q)
 	}
@@ -307,15 +339,15 @@ func (b *Bot) invalid(ctx context.Context, q CallbackQuery) error {
 func (b *Bot) denied(ctx context.Context, q CallbackQuery) error {
 	return b.edit(ctx, q, "Недостаточно прав.", mainMenuButton())
 }
-func (b *Bot) isAwaiting(id int64) bool {
+func (b *Bot) awaitingState(id int64) (inputState, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	s, ok := b.awaiting[id]
 	if ok && time.Now().After(s.expires) {
 		delete(b.awaiting, id)
-		return false
+		return inputState{}, false
 	}
-	return ok
+	return s, ok
 }
 func (b *Bot) clearAwaiting(id int64) { b.mu.Lock(); delete(b.awaiting, id); b.mu.Unlock() }
 func mainMenu(admin bool) Markup {
@@ -331,8 +363,13 @@ func mainMenuButton() Markup {
 func personMenu(k string) Markup {
 	return Markup{InlineKeyboard: [][]Button{{{Text: "Сегодня", CallbackData: "person:" + k + ":today"}, {Text: "Завтра", CallbackData: "person:" + k + ":tomorrow"}}, {{Text: "Неделя", CallbackData: "person:" + k + ":week"}}, {{Text: "Другой человек", CallbackData: "main"}, {Text: "Главное меню", CallbackData: "main"}}}}
 }
-func adminMenu() Markup {
-	return Markup{InlineKeyboard: [][]Button{{{Text: "Пользователи", CallbackData: "admin:users"}}, {{Text: "Добавить по ID", CallbackData: "admin:add"}}, {{Text: "Создать приглашение", CallbackData: "admin:invite"}}, {{Text: "Назад", CallbackData: "main"}}}}
+func adminMenu(editing ...bool) Markup {
+	rows := [][]Button{{{Text: "Пользователи", CallbackData: "admin:users"}}, {{Text: "Добавить по ID", CallbackData: "admin:add"}}, {{Text: "Создать приглашение", CallbackData: "admin:invite"}}}
+	if len(editing) > 0 && editing[0] {
+		rows = append(rows, []Button{{Text: "Изменить расписание", CallbackData: "edit:menu"}})
+	}
+	rows = append(rows, []Button{{Text: "Назад", CallbackData: "main"}})
+	return Markup{InlineKeyboard: rows}
 }
 func cancelMenu() Markup {
 	return Markup{InlineKeyboard: [][]Button{{{Text: "Отмена", CallbackData: "admin:menu"}}}}

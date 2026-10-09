@@ -85,6 +85,8 @@ func expand(raw []rawEvent, rangeStart, rangeEnd time.Time, defaultLoc *time.Loc
 				return nil, fmt.Errorf("UID %s override: %w", uid, parseErr)
 			}
 			if calendar.Overlaps(e, rangeStart, rangeEnd) {
+				e.Recurring = true
+				e.OriginalStart, _, _ = parseTime(*override.recurrenceID, defaultLoc)
 				out = append(out, e)
 			}
 		}
@@ -158,6 +160,8 @@ func expandMaster(raw rawEvent, overrides map[int64]rawEvent, used map[int64]boo
 				return nil, eErr
 			}
 			if calendar.Overlaps(e, from, to) {
+				e.Recurring = true
+				e.OriginalStart = start
 				out = append(out, e)
 			}
 			continue
@@ -165,6 +169,10 @@ func expandMaster(raw rawEvent, overrides map[int64]rawEvent, used map[int64]boo
 		e := base
 		e.Start = start
 		e.End = start.Add(duration)
+		if raw.rule != "" || len(raw.rdates) > 0 {
+			e.Recurring = true
+			e.OriginalStart = start
+		}
 		if calendar.Overlaps(e, from, to) {
 			out = append(out, e)
 		}
