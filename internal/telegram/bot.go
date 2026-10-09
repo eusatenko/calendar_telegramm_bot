@@ -215,10 +215,17 @@ func (b *Bot) handleCallback(ctx context.Context, q CallbackQuery) error {
 		}
 		return b.invalid(ctx, q)
 	case "all":
-		if len(parts) != 2 || (parts[1] != "today" && parts[1] != "tomorrow") {
+		if (len(parts) != 2 && len(parts) != 3) || (parts[1] != "today" && parts[1] != "tomorrow") {
 			return b.invalid(ctx, q)
 		}
-		return b.showAll(ctx, q, parts[1])
+		mode := "people"
+		if len(parts) == 3 {
+			mode = parts[2]
+		}
+		if mode != "people" && mode != "chronological" {
+			return b.invalid(ctx, q)
+		}
+		return b.showAll(ctx, q, parts[1], mode)
 	case "admin":
 		if !admin {
 			return b.denied(ctx, q)
@@ -269,7 +276,7 @@ func (b *Bot) showPerson(ctx context.Context, q CallbackQuery, key, period strin
 	}
 	return b.editSplit(ctx, q, text, personMenu(key))
 }
-func (b *Bot) showAll(ctx context.Context, q CallbackQuery, period string) error {
+func (b *Bot) showAll(ctx context.Context, q CallbackQuery, period, mode string) error {
 	offset := 0
 	if period == "tomorrow" {
 		offset = 1
@@ -288,7 +295,11 @@ func (b *Bot) showAll(ctx context.Context, q CallbackQuery, period string) error
 	if offset == 1 {
 		title = "Завтра — расписание всех"
 	}
-	return b.editSplit(ctx, q, formatter.Combined(title, from, items), mainMenuButton())
+	text := formatter.Combined(title, from, items)
+	if mode == "chronological" {
+		text = formatter.CombinedChronological(title, from, items)
+	}
+	return b.editSplit(ctx, q, text, allScheduleMenu(period, mode))
 }
 func (b *Bot) admin(ctx context.Context, q CallbackQuery, p []string) error {
 	if len(p) < 2 {
@@ -420,6 +431,13 @@ func mainMenu(admin bool, editing ...bool) Markup {
 }
 func mainMenuButton() Markup {
 	return Markup{InlineKeyboard: [][]Button{{{Text: "Главное меню", CallbackData: "main"}}}}
+}
+func allScheduleMenu(period, mode string) Markup {
+	button := Button{Text: "В хронологическом порядке", CallbackData: "all:" + period + ":chronological"}
+	if mode == "chronological" {
+		button = Button{Text: "По людям", CallbackData: "all:" + period + ":people"}
+	}
+	return Markup{InlineKeyboard: [][]Button{{button}, {{Text: "Главное меню", CallbackData: "main"}}}}
 }
 func personMenu(k string) Markup {
 	return Markup{InlineKeyboard: [][]Button{{{Text: "Сегодня", CallbackData: "person:" + k + ":today"}, {Text: "Завтра", CallbackData: "person:" + k + ":tomorrow"}}, {{Text: "Неделя", CallbackData: "person:" + k + ":week"}}, {{Text: "Другой человек", CallbackData: "main"}, {Text: "Главное меню", CallbackData: "main"}}}}

@@ -84,3 +84,28 @@ func TestCombinedKeepsPersonalHeaderForMixedSection(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestCombinedChronologicalMergesAndSortsAllEvents(t *testing.T) {
+	d := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
+	event := func(summary string, hour, minute, duration int) calendar.Event {
+		start := d.Add(time.Duration(hour)*time.Hour + time.Duration(minute)*time.Minute)
+		return calendar.Event{Summary: summary, Start: start, End: start.Add(time.Duration(duration) * time.Minute)}
+	}
+	got := CombinedChronological("Завтра — расписание всех", d, []PersonEvents{
+		{Name: "Аня", Events: []calendar.Event{event("Аня — Бассейн", 9, 0, 45), event("Аня — Современный", 11, 50, 60)}},
+		{Name: "Лёша", Events: []calendar.Event{event("Лёша — Бассейн", 9, 0, 45), event("Лёша — Репертуар", 14, 30, 60)}},
+		{Name: "Настя", Events: []calendar.Event{event("Настя — спираль", 10, 0, 60)}},
+	})
+	want := "Завтра — расписание всех\n\n09:00–09:45 Аня, Лёша — Бассейн\n10:00–11:00 Настя — спираль\n11:50–12:50 Аня — Современный\n14:30–15:30 Лёша — Репертуар"
+	if got != want {
+		t.Fatalf("got:\n%s\n\nwant:\n%s", got, want)
+	}
+}
+
+func TestCombinedChronologicalKeepsCalendarWarnings(t *testing.T) {
+	d := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
+	got := CombinedChronological("Расписание", d, []PersonEvents{{Name: "Аня", Error: true}, {Name: "Лёша", Stale: true}})
+	if !strings.Contains(got, "Нет занятий") || !strings.Contains(got, "Аня: не удалось") || !strings.Contains(got, "Лёша: данные могут") {
+		t.Fatal(got)
+	}
+}

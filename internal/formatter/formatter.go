@@ -72,6 +72,32 @@ func Combined(title string, start time.Time, people []PersonEvents) string {
 	return b.String()
 }
 
+func CombinedChronological(title string, start time.Time, people []PersonEvents) string {
+	groups, _ := combinedGroups(start, people)
+	groups = sortedCombinedGroups(groups, func(combinedGroup) bool { return true })
+	var b strings.Builder
+	b.WriteString(title)
+	if len(groups) == 0 {
+		b.WriteString("\n\nНет занятий")
+	} else {
+		for index, group := range groups {
+			separator := "\n"
+			if index == 0 {
+				separator = "\n\n"
+			}
+			b.WriteString(separator + combinedLine(start, group))
+		}
+	}
+	for _, person := range people {
+		if person.Error {
+			b.WriteString("\n⚠️ " + person.Name + ": не удалось получить расписание.")
+		} else if person.Stale {
+			b.WriteString("\n⚠️ " + person.Name + ": данные могут быть неактуальны.")
+		}
+	}
+	return b.String()
+}
+
 type PersonEvents struct {
 	Name         string
 	Events       []calendar.Event

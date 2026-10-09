@@ -512,6 +512,17 @@ func TestBotCommandIgnoresAnotherBotMention(t *testing.T) {
 	}
 }
 
+func TestAllScheduleMenuTogglesViewAboveMainMenu(t *testing.T) {
+	people := allScheduleMenu("tomorrow", "people")
+	if len(people.InlineKeyboard) != 2 || people.InlineKeyboard[0][0].Text != "В хронологическом порядке" || people.InlineKeyboard[0][0].CallbackData != "all:tomorrow:chronological" || people.InlineKeyboard[1][0].CallbackData != "main" {
+		t.Fatalf("people menu=%+v", people)
+	}
+	chronological := allScheduleMenu("today", "chronological")
+	if chronological.InlineKeyboard[0][0].Text != "По людям" || chronological.InlineKeyboard[0][0].CallbackData != "all:today:people" {
+		t.Fatalf("chronological menu=%+v", chronological)
+	}
+}
+
 func TestEmptyMarkupIsSerializedAsTelegramArray(t *testing.T) {
 	bot, store, calls := botFixture(t)
 	if err := store.BootstrapAdmin(1); err != nil {
