@@ -97,13 +97,41 @@ func TestMenusHideAdminForUser(t *testing.T) {
 }
 
 func TestEditingButtonIsFeatureGated(t *testing.T) {
-	disabled, _ := json.Marshal(adminMenu(false))
-	enabled, _ := json.Marshal(adminMenu(true))
+	disabled, _ := json.Marshal(mainMenu(false, false))
+	enabled, _ := json.Marshal(mainMenu(false, true))
 	if strings.Contains(string(disabled), "Изменить расписание") {
 		t.Fatal("editing button visible while disabled")
 	}
 	if !strings.Contains(string(enabled), "Изменить расписание") {
-		t.Fatal("editing button missing while enabled")
+		t.Fatal("editing button missing for authorized user while enabled")
+	}
+	admin, _ := json.Marshal(adminMenu(true))
+	if strings.Contains(string(admin), "Изменить расписание") || !strings.Contains(string(admin), "Добавить событие") {
+		t.Fatal("admin menu buttons are incorrect")
+	}
+}
+
+func TestAuthorizedUserCanOpenEditing(t *testing.T) {
+	bot, store, calls := botFixture(t)
+	if err := store.BootstrapAdmin(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddUser(1, 2); err != nil {
+		t.Fatal(err)
+	}
+	bot.EnableScheduleEditing(&recordingEditor{})
+	q := CallbackQuery{ID: "q", From: User{ID: 2}, Message: Message{MessageID: 7, Chat: Chat{ID: 2}}, Data: "edit:menu"}
+	if err := bot.handleCallback(context.Background(), q); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, call := range *calls {
+		if call.body["text"] == "Чьё расписание открыть?" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("calls=%+v", *calls)
 	}
 }
 

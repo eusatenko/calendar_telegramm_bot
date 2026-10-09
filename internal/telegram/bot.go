@@ -43,6 +43,7 @@ type createSession struct {
 	targets     map[string]bool
 	date        time.Time
 	summary     string
+	location    string
 	start, end  time.Time
 	repeatUntil *time.Time
 }
@@ -122,7 +123,7 @@ func (b *Bot) handleMessage(ctx context.Context, m Message) error {
 		if err := b.store.RedeemInvite(token, m.From.ID, m.From.Username, m.From.FirstName); err != nil {
 			return b.client.Send(ctx, m.Chat.ID, "Приглашение недействительно, просрочено или уже использовано.", Markup{})
 		}
-		return b.client.Send(ctx, m.Chat.ID, "Доступ предоставлен.", mainMenu(false))
+		return b.client.Send(ctx, m.Chat.ID, "Доступ предоставлен.", mainMenu(false, b.editor != nil))
 	}
 	authorized, admin, err := b.store.Authorized(m.From.ID)
 	if err != nil {
@@ -134,17 +135,20 @@ func (b *Bot) handleMessage(ctx context.Context, m Message) error {
 	_ = b.store.Touch(m.From.ID, m.From.Username, m.From.FirstName)
 	if m.Text == "/cancel" {
 		b.clearAwaiting(m.From.ID)
-		return b.client.Send(ctx, m.Chat.ID, "Действие отменено.", adminMenu(b.editor != nil))
+		if admin {
+			return b.client.Send(ctx, m.Chat.ID, "Действие отменено.", adminMenu(b.editor != nil))
+		}
+		return b.client.Send(ctx, m.Chat.ID, "Действие отменено.", mainMenu(false, b.editor != nil))
 	}
 	if state, ok := b.awaitingState(m.From.ID); ok {
+		if strings.HasPrefix(state.kind, "edit_") {
+			return b.handleEditInput(ctx, m, state)
+		}
 		if !admin {
-			return b.client.Send(ctx, m.Chat.ID, "Недостаточно прав.", mainMenu(false))
+			return b.client.Send(ctx, m.Chat.ID, "Недостаточно прав.", mainMenu(false, b.editor != nil))
 		}
 		if strings.HasPrefix(state.kind, "create_") {
 			return b.handleCreateInput(ctx, m, state)
-		}
-		if state.kind != "add_user" {
-			return b.handleEditInput(ctx, m, state)
 		}
 		id, e := strconv.ParseInt(strings.TrimSpace(m.Text), 10, 64)
 		if e != nil || id <= 0 {
@@ -159,7 +163,7 @@ func (b *Bot) handleMessage(ctx context.Context, m Message) error {
 		b.clearAwaiting(m.From.ID)
 		return b.client.Send(ctx, m.Chat.ID, fmt.Sprintf("Пользователь %d добавлен или активирован.", id), adminMenu(b.editor != nil))
 	}
-	return b.client.Send(ctx, m.Chat.ID, "Семейное расписание", mainMenu(admin))
+	return b.client.Send(ctx, m.Chat.ID, "Семейное расписание", mainMenu(admin, b.editor != nil))
 }
 func (b *Bot) handleCallback(ctx context.Context, q CallbackQuery) error {
 	defer func() { _ = b.client.Answer(context.Background(), q.ID, "") }()
@@ -176,7 +180,7 @@ func (b *Bot) handleCallback(ctx context.Context, q CallbackQuery) error {
 		if len(parts) != 1 {
 			return b.invalid(ctx, q)
 		}
-		return b.edit(ctx, q, "Семейное расписание", mainMenu(admin))
+		return b.edit(ctx, q, "Семейное расписание", mainMenu(admin, b.editor != nil))
 	case "person":
 		if len(parts) == 2 {
 			if _, ok := b.people[parts[1]]; !ok {
@@ -202,10 +206,7 @@ func (b *Bot) handleCallback(ctx context.Context, q CallbackQuery) error {
 		}
 		return b.admin(ctx, q, parts)
 	case "edit":
-		if !admin || b.editor == nil {
-			return b.denied(ctx, q)
-		}
-		if err = b.store.RequireAdmin(ctx, q.From.ID); err != nil {
+		if b.editor == nil {
 			return b.denied(ctx, q)
 		}
 		return b.scheduleEdit(ctx, q, parts)
@@ -375,8 +376,11 @@ func (b *Bot) awaitingState(id int64) (inputState, bool) {
 	return s, ok
 }
 func (b *Bot) clearAwaiting(id int64) { b.mu.Lock(); delete(b.awaiting, id); b.mu.Unlock() }
-func mainMenu(admin bool) Markup {
+func mainMenu(admin bool, editing ...bool) Markup {
 	m := Markup{InlineKeyboard: [][]Button{{{Text: "Сегодня всех", CallbackData: "all:today"}, {Text: "Завтра всех", CallbackData: "all:tomorrow"}}, {{Text: "Аня", CallbackData: "person:anya"}, {Text: "Лёша", CallbackData: "person:lesha"}}, {{Text: "Саша", CallbackData: "person:sasha"}, {Text: "Настя", CallbackData: "person:nastya"}}}}
+	if len(editing) > 0 && editing[0] {
+		m.InlineKeyboard = append(m.InlineKeyboard, []Button{{Text: "Изменить расписание", CallbackData: "edit:menu"}})
+	}
 	if admin {
 		m.InlineKeyboard = append(m.InlineKeyboard, []Button{{Text: "Управление доступом", CallbackData: "admin:menu"}})
 	}
@@ -391,7 +395,7 @@ func personMenu(k string) Markup {
 func adminMenu(editing ...bool) Markup {
 	rows := [][]Button{{{Text: "Пользователи", CallbackData: "admin:users"}}, {{Text: "Добавить по ID", CallbackData: "admin:add"}}, {{Text: "Создать приглашение", CallbackData: "admin:invite"}}}
 	if len(editing) > 0 && editing[0] {
-		rows = append(rows, []Button{{Text: "Изменить расписание", CallbackData: "edit:menu"}, {Text: "Добавить событие", CallbackData: "create:menu"}})
+		rows = append(rows, []Button{{Text: "Добавить событие", CallbackData: "create:menu"}})
 	}
 	rows = append(rows, []Button{{Text: "Назад", CallbackData: "main"}})
 	return Markup{InlineKeyboard: rows}

@@ -64,7 +64,7 @@ func (b *Bot) scheduleEdit(ctx context.Context, q CallbackQuery, parts []string)
 		b.mu.Lock()
 		b.awaiting[q.From.ID] = inputState{expires: time.Now().Add(5 * time.Minute), kind: "edit_date", token: parts[2]}
 		b.mu.Unlock()
-		return b.edit(ctx, q, "Отправьте дату в формате ДД.ММ.ГГГГ.", cancelMenu())
+		return b.edit(ctx, q, "Отправьте дату в формате ДД.ММ.ГГГГ.", editCancelMenu())
 	case "day":
 		return b.editDay(ctx, q, parts)
 	case "event":
@@ -273,14 +273,14 @@ func (b *Bot) promptEditInput(ctx context.Context, q CallbackQuery, token, field
 	} else if field == "location" {
 		text = "Отправьте новое место события. Чтобы удалить место, отправьте один дефис: -"
 	}
-	return b.edit(ctx, q, text+"\n\nОжидание действует 5 минут.", cancelMenu())
+	return b.edit(ctx, q, text+"\n\nОжидание действует 5 минут.", editCancelMenu())
 }
 
 func (b *Bot) handleEditInput(ctx context.Context, message Message, state inputState) error {
 	if state.kind == "edit_date" {
 		date, err := time.ParseInLocation("02.01.2006", strings.TrimSpace(message.Text), b.loc)
 		if err != nil {
-			return b.client.Send(ctx, message.Chat.ID, "Неверная дата. Пример: 25.10.2026.", cancelMenu())
+			return b.client.Send(ctx, message.Chat.ID, "Неверная дата. Пример: 25.10.2026.", editCancelMenu())
 		}
 		b.clearAwaiting(message.From.ID)
 		return b.sendEditDay(ctx, message.Chat.ID, message.From.ID, state.token, date)
@@ -295,13 +295,13 @@ func (b *Bot) handleEditInput(ctx context.Context, message Message, state inputS
 	case "edit_title":
 		title := strings.TrimSpace(message.Text)
 		if title == "" || len([]rune(title)) > 300 {
-			return b.client.Send(ctx, message.Chat.ID, "Название должно содержать от 1 до 300 символов. Отправьте /cancel для отмены.", cancelMenu())
+			return b.client.Send(ctx, message.Chat.ID, "Название должно содержать от 1 до 300 символов. Отправьте /cancel для отмены.", editCancelMenu())
 		}
 		request.Summary = &title
 	case "edit_time":
 		start, end, err := parseTimeRange(message.Text, session.event.Start, b.loc)
 		if err != nil {
-			return b.client.Send(ctx, message.Chat.ID, "Неверный формат. Пример: 18:00-19:30. Отправьте /cancel для отмены.", cancelMenu())
+			return b.client.Send(ctx, message.Chat.ID, "Неверный формат. Пример: 18:00-19:30. Отправьте /cancel для отмены.", editCancelMenu())
 		}
 		request.Start, request.End = &start, &end
 	case "edit_location":
@@ -310,7 +310,7 @@ func (b *Bot) handleEditInput(ctx context.Context, message Message, state inputS
 			location = ""
 		}
 		if len([]rune(location)) > 500 {
-			return b.client.Send(ctx, message.Chat.ID, "Место должно содержать не более 500 символов.", cancelMenu())
+			return b.client.Send(ctx, message.Chat.ID, "Место должно содержать не более 500 символов.", editCancelMenu())
 		}
 		request.Location = &location
 	default:
@@ -521,6 +521,10 @@ func copyKeys(copies []storage.EventCopy) []string {
 
 func editBackMenu() Markup {
 	return Markup{InlineKeyboard: [][]Button{{{Text: "К выбору события", CallbackData: "edit:menu"}}, {{Text: "Главное меню", CallbackData: "main"}}}}
+}
+
+func editCancelMenu() Markup {
+	return Markup{InlineKeyboard: [][]Button{{{Text: "Отмена", CallbackData: "edit:menu"}}}}
 }
 
 func truncateRunes(value string, limit int) string {

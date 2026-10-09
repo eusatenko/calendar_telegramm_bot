@@ -46,6 +46,7 @@ type CreateRequest struct {
 	Actor       int64
 	TargetKeys  []string
 	Summary     string
+	Location    string
 	Start, End  time.Time
 	RepeatUntil *time.Time
 }
@@ -127,7 +128,7 @@ func (c *Coordinator) Create(ctx context.Context, request CreateRequest) ([]Copy
 			failures++
 			continue
 		}
-		uid, err := c.writer.Create(ctx, target.CalendarID, googleapi.Create{Summary: request.Summary, Start: request.Start, End: request.End, RepeatUntil: request.RepeatUntil})
+		uid, err := c.writer.Create(ctx, target.CalendarID, googleapi.Create{Summary: request.Summary, Location: request.Location, Start: request.Start, End: request.End, RepeatUntil: request.RepeatUntil})
 		if err != nil {
 			failures++
 		} else {

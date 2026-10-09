@@ -38,6 +38,7 @@ type Edit struct {
 
 type Create struct {
 	Summary     string
+	Location    string
 	Start, End  time.Time
 	RepeatUntil *time.Time
 }
@@ -138,6 +139,9 @@ func (c *Client) Create(ctx context.Context, calendarID string, event Create) (s
 		"summary": strings.TrimSpace(event.Summary),
 		"start":   apiDateTime{DateTime: event.Start.Format(time.RFC3339), TimeZone: event.Start.Location().String()},
 		"end":     apiDateTime{DateTime: event.End.Format(time.RFC3339), TimeZone: event.End.Location().String()},
+	}
+	if strings.TrimSpace(event.Location) != "" {
+		body["location"] = strings.TrimSpace(event.Location)
 	}
 	if event.RepeatUntil != nil {
 		until := time.Date(event.RepeatUntil.Year(), event.RepeatUntil.Month(), event.RepeatUntil.Day(), 23, 59, 59, 0, event.RepeatUntil.Location()).UTC()

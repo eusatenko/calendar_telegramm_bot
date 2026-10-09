@@ -122,11 +122,11 @@ func TestCreateWeeklyEvent(t *testing.T) {
 	start := time.Date(2026, 10, 10, 13, 0, 0, 0, loc)
 	end := start.Add(time.Hour)
 	until := time.Date(2026, 12, 31, 0, 0, 0, 0, loc)
-	uid, err := client.Create(context.Background(), "calendar", Create{Summary: "Современный", Start: start, End: end, RepeatUntil: &until})
+	uid, err := client.Create(context.Background(), "calendar", Create{Summary: "Современный", Location: "Большой зал", Start: start, End: end, RepeatUntil: &until})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if uid != "created@example.com" || body["summary"] != "Современный" {
+	if uid != "created@example.com" || body["summary"] != "Современный" || body["location"] != "Большой зал" {
 		t.Fatalf("uid=%q body=%+v", uid, body)
 	}
 	recurrence, ok := body["recurrence"].([]any)

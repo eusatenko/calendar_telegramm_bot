@@ -97,7 +97,7 @@ func (b *Bot) scheduleCreate(ctx context.Context, q CallbackQuery, parts []strin
 		if !ok || session.summary == "" || session.start.IsZero() {
 			return b.edit(ctx, q, "Сеанс устарел.", adminMenu(true))
 		}
-		results, err := b.editor.Create(ctx, schedule.CreateRequest{Actor: q.From.ID, TargetKeys: selectedCreateKeys(session, b.order), Summary: session.summary, Start: session.start, End: session.end, RepeatUntil: session.repeatUntil})
+		results, err := b.editor.Create(ctx, schedule.CreateRequest{Actor: q.From.ID, TargetKeys: selectedCreateKeys(session, b.order), Summary: session.summary, Location: session.location, Start: session.start, End: session.end, RepeatUntil: session.repeatUntil})
 		if err != nil {
 			return err
 		}
@@ -140,11 +140,20 @@ func (b *Bot) handleCreateInput(ctx context.Context, message Message, state inpu
 		}
 		session.start, session.end = start, end
 		b.saveCreateSession(state.token, session)
+		b.setAwaiting(message.From.ID, inputState{expires: time.Now().Add(5 * time.Minute), kind: "create_location", token: state.token})
+		return b.client.Send(ctx, message.Chat.ID, "Отправьте место события или один дефис (-), чтобы пропустить.", cancelMenu())
+	case "create_location":
+		location := strings.TrimSpace(message.Text)
+		if location == "-" {
+			location = ""
+		}
+		if len([]rune(location)) > 500 {
+			return b.client.Send(ctx, message.Chat.ID, "Место должно содержать не более 500 символов.", cancelMenu())
+		}
+		session.location = location
+		b.saveCreateSession(state.token, session)
 		b.clearAwaiting(message.From.ID)
-		return b.client.Send(ctx, message.Chat.ID, "Тип события?", Markup{InlineKeyboard: [][]Button{
-			{{Text: "Разовое", CallbackData: "create:type:" + state.token + ":once"}, {Text: "Еженедельно", CallbackData: "create:type:" + state.token + ":weekly"}},
-			{{Text: "Отмена", CallbackData: "admin:menu"}},
-		}})
+		return b.client.Send(ctx, message.Chat.ID, "Тип события?", createTypeMarkup(state.token))
 	case "create_until":
 		until, err := parseDate(message.Text, b.loc)
 		if err != nil || until.Before(time.Date(session.start.Year(), session.start.Month(), session.start.Day(), 0, 0, 0, 0, b.loc)) {
@@ -194,7 +203,18 @@ func createPreviewText(session createSession, b *Bot) string {
 	if session.repeatUntil != nil {
 		repeat = "Еженедельно до " + session.repeatUntil.Format("02.01.2006")
 	}
-	return fmt.Sprintf("Проверьте новое событие:\n\n%s\n%s–%s\n%s\nКалендари: %s", session.summary, session.start.Format("02.01.2006 15:04"), session.end.Format("15:04"), repeat, strings.Join(createTargetNames(session, b), ", "))
+	location := ""
+	if session.location != "" {
+		location = "\nМесто: " + session.location
+	}
+	return fmt.Sprintf("Проверьте новое событие:\n\n%s\n%s–%s%s\n%s\nКалендари: %s", session.summary, session.start.Format("02.01.2006 15:04"), session.end.Format("15:04"), location, repeat, strings.Join(createTargetNames(session, b), ", "))
+}
+
+func createTypeMarkup(token string) Markup {
+	return Markup{InlineKeyboard: [][]Button{
+		{{Text: "Разовое", CallbackData: "create:type:" + token + ":once"}, {Text: "Еженедельно", CallbackData: "create:type:" + token + ":weekly"}},
+		{{Text: "Отмена", CallbackData: "admin:menu"}},
+	}}
 }
 
 func createConfirmMarkup(token string) Markup {

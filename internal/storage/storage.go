@@ -118,7 +118,7 @@ func (s *Store) LinkEventCopies(actor int64, copies []EventCopy) error {
 		return err
 	}
 	defer tx.Rollback()
-	if err = requireAdminTx(tx, actor); err != nil {
+	if err = requireAuthorizedTx(tx, actor); err != nil {
 		return err
 	}
 	result, err := tx.Exec(`INSERT INTO event_groups(created_at,created_by) VALUES(?,?)`, s.now().UTC(), actor)
@@ -147,7 +147,7 @@ func (s *Store) LinkEventCopies(actor int64, copies []EventCopy) error {
 }
 
 func (s *Store) RecordEventEdit(actor int64, copyCount, failureCount int) error {
-	if err := s.RequireAdmin(context.Background(), actor); err != nil {
+	if err := s.RequireAuthorized(context.Background(), actor); err != nil {
 		return err
 	}
 	_, err := s.db.Exec(`INSERT INTO audit_log(actor_user_id,action,created_at,metadata) VALUES(?,'EVENT_EDITED',?,?)`, actor, s.now().UTC(), fmt.Sprintf(`{"copy_count":%d,"failure_count":%d}`, copyCount, failureCount))
@@ -356,6 +356,18 @@ func (s *Store) RequireAdmin(ctx context.Context, id int64) error {
 	return nil
 }
 
+func (s *Store) RequireAuthorized(ctx context.Context, id int64) error {
+	var n int
+	e := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE telegram_user_id=? AND is_active=1`, id).Scan(&n)
+	if e != nil {
+		return e
+	}
+	if n != 1 {
+		return errors.New("active user access required")
+	}
+	return nil
+}
+
 func requireAdminTx(tx *sql.Tx, id int64) error {
 	var n int
 	if e := tx.QueryRow(`SELECT COUNT(*) FROM users WHERE telegram_user_id=? AND role='admin' AND is_active=1`, id).Scan(&n); e != nil {
@@ -363,6 +375,17 @@ func requireAdminTx(tx *sql.Tx, id int64) error {
 	}
 	if n != 1 {
 		return errors.New("admin access required")
+	}
+	return nil
+}
+
+func requireAuthorizedTx(tx *sql.Tx, id int64) error {
+	var n int
+	if e := tx.QueryRow(`SELECT COUNT(*) FROM users WHERE telegram_user_id=? AND is_active=1`, id).Scan(&n); e != nil {
+		return e
+	}
+	if n != 1 {
+		return errors.New("active user access required")
 	}
 	return nil
 }

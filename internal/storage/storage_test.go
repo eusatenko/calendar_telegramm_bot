@@ -139,7 +139,21 @@ func TestLinkAndLoadEventCopies(t *testing.T) {
 		t.Fatal("duplicate event was linked twice")
 	}
 	if err = s.LinkEventCopies(2, []EventCopy{{CalendarKey: "sasha", ICalUID: "x"}, {CalendarKey: "nastya", ICalUID: "y"}}); err == nil {
-		t.Fatal("non-admin linked events")
+		t.Fatal("unauthorized user linked events")
+	}
+}
+
+func TestActiveUserCanLinkAndAuditEventEdit(t *testing.T) {
+	s := openTest(t)
+	s.BootstrapAdmin(1)
+	if err := s.AddUser(1, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.LinkEventCopies(2, []EventCopy{{CalendarKey: "anya", ICalUID: "user-event"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordEventEdit(2, 1, 0); err != nil {
+		t.Fatal(err)
 	}
 }
 
