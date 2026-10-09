@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -121,12 +122,54 @@ func TestFindMatchingCopiesUsesExactTitleAndInterval(t *testing.T) {
 		"sasha": {Key: "sasha", Name: "Саша", Source: fixedSource{[]calendar.Event{{UID: "c", Summary: "Шахматы", Start: start.Add(time.Hour), End: start.Add(2 * time.Hour), Recurring: true}}}},
 	}
 	bot.order = []string{"anya", "lesha", "sasha"}
-	copies, err := bot.findMatchingCopies(editSession{personKey: "anya", event: selected})
+	match, err := bot.findMatchingCopies(editSession{personKey: "anya", event: selected})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(copies) != 2 || copies[0].ICalUID != "a" || copies[1].ICalUID != "b" {
-		t.Fatalf("copies=%+v", copies)
+	if len(match.copies) != 2 || match.copies[0].ICalUID != "a" || match.copies[1].ICalUID != "b" || !match.exactTitle {
+		t.Fatalf("match=%+v", match)
+	}
+}
+
+func TestFindMatchingCopiesFallsBackToSameInterval(t *testing.T) {
+	bot, _, _ := botFixture(t)
+	start := time.Date(2026, 10, 12, 18, 0, 0, 0, time.UTC)
+	selected := calendar.Event{UID: "a", Summary: "Шахматы — Аня", Start: start, End: start.Add(time.Hour), Recurring: true, OriginalStart: start}
+	bot.people = map[string]Person{
+		"anya":  {Key: "anya", Name: "Аня", Source: fixedSource{[]calendar.Event{selected}}},
+		"lesha": {Key: "lesha", Name: "Лёша", Source: fixedSource{[]calendar.Event{{UID: "b", Summary: "Шахматы — Лёша", Start: start, End: start.Add(time.Hour), Recurring: true, OriginalStart: start}}}},
+		"sasha": {Key: "sasha", Name: "Саша", Source: fixedSource{[]calendar.Event{{UID: "c", Summary: "Другое время", Start: start.Add(time.Hour), End: start.Add(2 * time.Hour), Recurring: true}}}},
+	}
+	bot.order = []string{"anya", "lesha", "sasha"}
+
+	match, err := bot.findMatchingCopies(editSession{personKey: "anya", event: selected})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(match.copies) != 2 || match.copies[1].ICalUID != "b" || match.exactTitle {
+		t.Fatalf("match=%+v", match)
+	}
+	if match.events[1].Summary != "Шахматы — Лёша" {
+		t.Fatalf("events=%+v", match.events)
+	}
+}
+
+func TestFindMatchingCopiesRejectsAmbiguousInterval(t *testing.T) {
+	bot, _, _ := botFixture(t)
+	start := time.Date(2026, 10, 12, 18, 0, 0, 0, time.UTC)
+	selected := calendar.Event{UID: "a", Summary: "Занятие", Start: start, End: start.Add(time.Hour), Recurring: true}
+	sameTime := func(uid, summary string) calendar.Event {
+		return calendar.Event{UID: uid, Summary: summary, Start: start, End: start.Add(time.Hour), Recurring: true}
+	}
+	bot.people = map[string]Person{
+		"anya":  {Key: "anya", Name: "Аня", Source: fixedSource{[]calendar.Event{selected}}},
+		"lesha": {Key: "lesha", Name: "Лёша", Source: fixedSource{[]calendar.Event{sameTime("b", "Первое"), sameTime("c", "Второе")}}},
+	}
+	bot.order = []string{"anya", "lesha"}
+
+	_, err := bot.findMatchingCopies(editSession{personKey: "anya", event: selected})
+	if !errors.Is(err, errAmbiguousCopyMatch) {
+		t.Fatalf("err=%v", err)
 	}
 }
 

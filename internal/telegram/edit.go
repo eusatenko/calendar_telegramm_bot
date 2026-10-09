@@ -16,6 +16,14 @@ import (
 	"github.com/eusatenko/calendar_telegramm_bot/internal/storage"
 )
 
+var errAmbiguousCopyMatch = errors.New("неоднозначное сопоставление копий")
+
+type copyMatch struct {
+	copies     []storage.EventCopy
+	events     []calendar.Event
+	exactTitle bool
+}
+
 func (b *Bot) scheduleEdit(ctx context.Context, q CallbackQuery, parts []string) error {
 	if len(parts) < 2 {
 		return b.invalid(ctx, q)
@@ -160,21 +168,28 @@ func (b *Bot) editEventCard(ctx context.Context, q CallbackQuery, token string) 
 	if len(linked) > 0 {
 		return b.showEditActions(ctx, q, token, session)
 	}
-	candidates, err := b.findMatchingCopies(session)
+	match, err := b.findMatchingCopies(session)
 	if err != nil {
+		if errors.Is(err, errAmbiguousCopyMatch) {
+			return b.edit(ctx, q, "Нельзя однозначно найти копии: в одном календаре есть несколько событий на это же время.", editBackMenu())
+		}
 		return err
 	}
-	session.candidates = candidates
+	session.candidates = match.copies
 	b.saveEditSession(token, session)
-	if len(candidates) < 2 {
-		return b.edit(ctx, q, "Связанные копии не найдены. Для первого изменения копии должны иметь одинаковые название и время.", editBackMenu())
+	if len(match.copies) < 2 {
+		return b.edit(ctx, q, "Связанные копии не найдены. В остальных календарях нет события с таким же временем.", editBackMenu())
 	}
-	names := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		names = append(names, b.people[candidate.CalendarKey].Name)
+	lines := make([]string, 0, len(match.copies))
+	for i, candidate := range match.copies {
+		lines = append(lines, "• "+b.people[candidate.CalendarKey].Name+": "+match.events[i].Summary)
 	}
-	text := eventDescription(session.event, b.loc) + "\n\nНайдены одинаковые копии: " + strings.Join(names, ", ") + ".\nПроверьте список перед связыванием."
-	markup := Markup{InlineKeyboard: [][]Button{{{Text: "Связать эти копии", CallbackData: "edit:link:" + token}}, {{Text: "Отмена", CallbackData: "edit:menu"}}}}
+	matchDescription := "Найдены одинаковые копии:"
+	if !match.exactTitle {
+		matchDescription = "Найдены события с тем же временем, но разными названиями:"
+	}
+	text := eventDescription(session.event, b.loc) + "\n\n" + matchDescription + "\n" + strings.Join(lines, "\n") + "\n\nСвяжите их, только если это действительно копии одного события."
+	markup := Markup{InlineKeyboard: [][]Button{{{Text: "Связать эти события", CallbackData: "edit:link:" + token}}, {{Text: "Отмена", CallbackData: "edit:menu"}}}}
 	return b.edit(ctx, q, text, markup)
 }
 
@@ -257,34 +272,61 @@ func (b *Bot) formatEditResults(actor int64, results []schedule.CopyResult) stri
 	return output.String()
 }
 
-func (b *Bot) findMatchingCopies(session editSession) ([]storage.EventCopy, error) {
+func (b *Bot) findMatchingCopies(session editSession) (copyMatch, error) {
 	dayStart := time.Date(session.event.Start.In(b.loc).Year(), session.event.Start.In(b.loc).Month(), session.event.Start.In(b.loc).Day(), 0, 0, 0, 0, b.loc)
 	dayEnd := dayStart.AddDate(0, 0, 1)
-	var copies []storage.EventCopy
+	exact := copyMatch{exactTitle: true}
+	byInterval := copyMatch{}
 	for _, key := range b.order {
+		if key == session.personKey {
+			copy := storage.EventCopy{CalendarKey: key, ICalUID: session.event.UID}
+			exact.copies = append(exact.copies, copy)
+			exact.events = append(exact.events, session.event)
+			byInterval.copies = append(byInterval.copies, copy)
+			byInterval.events = append(byInterval.events, session.event)
+			continue
+		}
 		person := b.people[key]
 		events, _, err := person.Source.Events(dayStart, dayEnd)
 		if err != nil {
-			return nil, err
+			return copyMatch{}, err
 		}
-		var matches []calendar.Event
+		var intervalMatches []calendar.Event
 		for _, event := range events {
-			if sameCopy(session.event, event) {
-				matches = append(matches, event)
+			if sameInterval(session.event, event) {
+				intervalMatches = append(intervalMatches, event)
 			}
 		}
-		if len(matches) > 1 {
-			return nil, fmt.Errorf("найдено несколько одинаковых событий в календаре %s", key)
+		if len(intervalMatches) > 1 {
+			return copyMatch{}, fmt.Errorf("%w: календарь %s", errAmbiguousCopyMatch, key)
 		}
-		if len(matches) == 1 {
-			copies = append(copies, storage.EventCopy{CalendarKey: key, ICalUID: matches[0].UID})
+		if len(intervalMatches) == 1 {
+			event := intervalMatches[0]
+			copy := storage.EventCopy{CalendarKey: key, ICalUID: event.UID}
+			byInterval.copies = append(byInterval.copies, copy)
+			byInterval.events = append(byInterval.events, event)
+			if sameTitle(session.event.Summary, event.Summary) {
+				exact.copies = append(exact.copies, copy)
+				exact.events = append(exact.events, event)
+			}
 		}
 	}
-	return copies, nil
+	if len(exact.copies) >= 2 {
+		return exact, nil
+	}
+	return byInterval, nil
 }
 
 func sameCopy(a, b calendar.Event) bool {
-	return strings.TrimSpace(a.Summary) == strings.TrimSpace(b.Summary) && a.Start.Equal(b.Start) && a.End.Equal(b.End) && a.AllDay == b.AllDay && a.Recurring == b.Recurring
+	return sameTitle(a.Summary, b.Summary) && sameInterval(a, b)
+}
+
+func sameTitle(a, b string) bool {
+	return strings.EqualFold(strings.Join(strings.Fields(a), " "), strings.Join(strings.Fields(b), " "))
+}
+
+func sameInterval(a, b calendar.Event) bool {
+	return a.Start.Equal(b.Start) && a.End.Equal(b.End) && a.AllDay == b.AllDay && a.Recurring == b.Recurring
 }
 
 func (b *Bot) newEditSession(actor int64, personKey string, event calendar.Event) (string, error) {
