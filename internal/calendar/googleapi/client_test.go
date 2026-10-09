@@ -75,3 +75,65 @@ func TestApplySeriesTimePreservesParentDate(t *testing.T) {
 		t.Fatalf("patch=%+v", patch)
 	}
 }
+
+func TestApplyLocation(t *testing.T) {
+	var patch map[string]any
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/token":
+			_, _ = io.WriteString(w, `{"access_token":"access","expires_in":3600}`)
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"items":[{"id":"event","etag":"tag","iCalUID":"uid"}]}`)
+		case r.Method == http.MethodPatch:
+			if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.WriteString(w, `{}`)
+		}
+	})
+	location := "Большой зал"
+	if err := client.Apply(context.Background(), "calendar", Edit{ICalUID: "uid", Scope: ScopeSeries, Location: &location}); err != nil {
+		t.Fatal(err)
+	}
+	if patch["location"] != location {
+		t.Fatalf("patch=%+v", patch)
+	}
+}
+
+func TestCreateWeeklyEvent(t *testing.T) {
+	var body map[string]any
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/token" {
+			_, _ = io.WriteString(w, `{"access_token":"access","expires_in":3600}`)
+			return
+		}
+		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/events") {
+			http.Error(w, "unexpected", http.StatusBadRequest)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.WriteString(w, `{"iCalUID":"created@example.com"}`)
+	})
+	loc := time.FixedZone("MSK", 3*60*60)
+	start := time.Date(2026, 10, 10, 13, 0, 0, 0, loc)
+	end := start.Add(time.Hour)
+	until := time.Date(2026, 12, 31, 0, 0, 0, 0, loc)
+	uid, err := client.Create(context.Background(), "calendar", Create{Summary: "Современный", Start: start, End: end, RepeatUntil: &until})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uid != "created@example.com" || body["summary"] != "Современный" {
+		t.Fatalf("uid=%q body=%+v", uid, body)
+	}
+	recurrence, ok := body["recurrence"].([]any)
+	if !ok || len(recurrence) != 1 || recurrence[0] != "RRULE:FREQ=WEEKLY;UNTIL=20261231T205959Z" {
+		t.Fatalf("recurrence=%+v", body["recurrence"])
+	}
+	if _, exists := body["id"]; exists {
+		t.Fatalf("output-only fields must not be sent: %+v", body)
+	}
+}

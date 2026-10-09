@@ -27,31 +27,43 @@ type inputState struct {
 	scope       googleapi.Scope
 }
 type editSession struct {
+	expires      time.Time
+	actor        int64
+	personKey    string
+	event        calendar.Event
+	candidates   []storage.EventCopy
+	selectedKeys []string
+	targetsText  string
+	needsLink    bool
+	pending      *schedule.Request
+}
+type createSession struct {
 	expires     time.Time
 	actor       int64
-	personKey   string
-	event       calendar.Event
-	candidates  []storage.EventCopy
-	targetsText string
-	needsLink   bool
-	pending     *schedule.Request
+	targets     map[string]bool
+	date        time.Time
+	summary     string
+	start, end  time.Time
+	repeatUntil *time.Time
 }
 type ScheduleEditor interface {
 	Apply(context.Context, schedule.Request) ([]schedule.CopyResult, error)
+	Create(context.Context, schedule.CreateRequest) ([]schedule.CopyResult, error)
 }
 type Bot struct {
-	client       *Client
-	store        *storage.Store
-	people       map[string]Person
-	order        []string
-	loc          *time.Location
-	inviteTTL    time.Duration
-	username     string
-	log          *slog.Logger
-	mu           sync.Mutex
-	awaiting     map[int64]inputState
-	editor       ScheduleEditor
-	editSessions map[string]editSession
+	client         *Client
+	store          *storage.Store
+	people         map[string]Person
+	order          []string
+	loc            *time.Location
+	inviteTTL      time.Duration
+	username       string
+	log            *slog.Logger
+	mu             sync.Mutex
+	awaiting       map[int64]inputState
+	editor         ScheduleEditor
+	editSessions   map[string]editSession
+	createSessions map[string]createSession
 }
 
 func NewBot(client *Client, store *storage.Store, people []Person, loc *time.Location, inviteTTL time.Duration, username string, log *slog.Logger) *Bot {
@@ -61,7 +73,7 @@ func NewBot(client *Client, store *storage.Store, people []Person, loc *time.Loc
 		m[p.Key] = p
 		order = append(order, p.Key)
 	}
-	return &Bot{client: client, store: store, people: m, order: order, loc: loc, inviteTTL: inviteTTL, username: username, log: log, awaiting: map[int64]inputState{}, editSessions: map[string]editSession{}}
+	return &Bot{client: client, store: store, people: m, order: order, loc: loc, inviteTTL: inviteTTL, username: username, log: log, awaiting: map[int64]inputState{}, editSessions: map[string]editSession{}, createSessions: map[string]createSession{}}
 }
 
 func (b *Bot) EnableScheduleEditing(editor ScheduleEditor) { b.editor = editor }
@@ -127,6 +139,9 @@ func (b *Bot) handleMessage(ctx context.Context, m Message) error {
 	if state, ok := b.awaitingState(m.From.ID); ok {
 		if !admin {
 			return b.client.Send(ctx, m.Chat.ID, "Недостаточно прав.", mainMenu(false))
+		}
+		if strings.HasPrefix(state.kind, "create_") {
+			return b.handleCreateInput(ctx, m, state)
 		}
 		if state.kind != "add_user" {
 			return b.handleEditInput(ctx, m, state)
@@ -194,6 +209,14 @@ func (b *Bot) handleCallback(ctx context.Context, q CallbackQuery) error {
 			return b.denied(ctx, q)
 		}
 		return b.scheduleEdit(ctx, q, parts)
+	case "create":
+		if !admin || b.editor == nil {
+			return b.denied(ctx, q)
+		}
+		if err = b.store.RequireAdmin(ctx, q.From.ID); err != nil {
+			return b.denied(ctx, q)
+		}
+		return b.scheduleCreate(ctx, q, parts)
 	default:
 		return b.invalid(ctx, q)
 	}
@@ -368,7 +391,7 @@ func personMenu(k string) Markup {
 func adminMenu(editing ...bool) Markup {
 	rows := [][]Button{{{Text: "Пользователи", CallbackData: "admin:users"}}, {{Text: "Добавить по ID", CallbackData: "admin:add"}}, {{Text: "Создать приглашение", CallbackData: "admin:invite"}}}
 	if len(editing) > 0 && editing[0] {
-		rows = append(rows, []Button{{Text: "Изменить расписание", CallbackData: "edit:menu"}})
+		rows = append(rows, []Button{{Text: "Изменить расписание", CallbackData: "edit:menu"}, {Text: "Добавить событие", CallbackData: "create:menu"}})
 	}
 	rows = append(rows, []Button{{Text: "Назад", CallbackData: "main"}})
 	return Markup{InlineKeyboard: rows}

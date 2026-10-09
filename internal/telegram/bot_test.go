@@ -119,6 +119,10 @@ func (e *recordingEditor) Apply(context.Context, schedule.Request) ([]schedule.C
 	e.calls++
 	return []schedule.CopyResult{{Key: "anya", Name: "Аня"}}, nil
 }
+func (e *recordingEditor) Create(context.Context, schedule.CreateRequest) ([]schedule.CopyResult, error) {
+	e.calls++
+	return []schedule.CopyResult{{Key: "anya", Name: "Аня"}}, nil
+}
 
 func TestFindMatchingCopiesUsesExactTitleAndInterval(t *testing.T) {
 	bot, _, _ := botFixture(t)
@@ -209,6 +213,28 @@ func TestConfirmLinksSingleEventAndAppliesEdit(t *testing.T) {
 	}
 	if len(linked) != 1 || editor.calls != 1 {
 		t.Fatalf("linked=%+v editor_calls=%d", linked, editor.calls)
+	}
+}
+
+func TestSelectedCreateKeysPreserveCalendarOrder(t *testing.T) {
+	session := createSession{targets: map[string]bool{"sasha": true, "anya": true}}
+	got := selectedCreateKeys(session, []string{"anya", "lesha", "sasha", "nastya"})
+	if strings.Join(got, ",") != "anya,sasha" {
+		t.Fatalf("keys=%v", got)
+	}
+}
+
+func TestParseCustomDateUsesConfiguredTimezone(t *testing.T) {
+	loc, err := time.LoadLocation("Europe/Moscow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := parseDate("10.10.2026", loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Format(time.RFC3339) != "2026-10-10T00:00:00+03:00" {
+		t.Fatalf("date=%s", got.Format(time.RFC3339))
 	}
 }
 

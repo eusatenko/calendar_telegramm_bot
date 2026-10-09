@@ -17,10 +17,10 @@ type property struct {
 	params map[string]string
 }
 type rawEvent struct {
-	uid, summary, rule, status string
-	start, end                 property
-	rdates, exdates            []property
-	recurrenceID               *property
+	uid, summary, location, rule, status string
+	start, end                           property
+	rdates, exdates                      []property
+	recurrenceID                         *property
 }
 
 type Calendar struct {
@@ -201,7 +201,7 @@ func materialize(raw rawEvent, loc *time.Location) (calendar.Event, error) {
 	if allDay != endAllDay || !end.After(start) {
 		return calendar.Event{}, fmt.Errorf("некорректный интервал события")
 	}
-	return calendar.Event{UID: raw.uid, Summary: unescape(raw.summary), Start: start, End: end, AllDay: allDay}, nil
+	return calendar.Event{UID: raw.uid, Summary: unescape(raw.summary), Location: unescape(raw.location), Start: start, End: end, AllDay: allDay}, nil
 }
 
 func parse(r io.Reader) ([]rawEvent, error) {
@@ -255,6 +255,8 @@ func parse(r io.Reader) ([]rawEvent, error) {
 			cur.uid = p.value
 		case "SUMMARY":
 			cur.summary = p.value
+		case "LOCATION":
+			cur.location = p.value
 		case "STATUS":
 			cur.status = p.value
 		case "DTSTART":

@@ -46,6 +46,26 @@ END:VEVENT
 		t.Fatalf("%v", got)
 	}
 }
+func TestParsesEventLocation(t *testing.T) {
+	loc, _ := time.LoadLocation("Europe/Moscow")
+	from, _ := time.ParseInLocation("2006-01-02", "2026-09-07", loc)
+	events, err := ParseAndExpand(strings.NewReader(`BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:a
+DTSTART:20260907T180000
+DTEND:20260907T190000
+SUMMARY:Танцы
+LOCATION:Зал\, второй этаж
+END:VEVENT
+END:VCALENDAR
+`), from, from.AddDate(0, 0, 1), loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Location != "Зал, второй этаж" {
+		t.Fatalf("events=%+v", events)
+	}
+}
 func TestAllDayMultiDayAndTimedOverlap(t *testing.T) {
 	body := `BEGIN:VEVENT
 UID:a

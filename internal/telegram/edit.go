@@ -50,9 +50,21 @@ func (b *Bot) scheduleEdit(ctx context.Context, q CallbackQuery, parts []string)
 		}
 		markup := Markup{InlineKeyboard: [][]Button{
 			{{Text: "Сегодня", CallbackData: "edit:day:" + person.Key + ":0"}, {Text: "Завтра", CallbackData: "edit:day:" + person.Key + ":1"}},
+			{{Text: "Указать дату", CallbackData: "edit:date:" + person.Key}},
 			{{Text: "Назад", CallbackData: "edit:menu"}},
 		}}
 		return b.edit(ctx, q, person.Name+": выберите дату", markup)
+	case "date":
+		if len(parts) != 3 {
+			return b.invalid(ctx, q)
+		}
+		if _, ok := b.people[parts[2]]; !ok {
+			return b.invalid(ctx, q)
+		}
+		b.mu.Lock()
+		b.awaiting[q.From.ID] = inputState{expires: time.Now().Add(5 * time.Minute), kind: "edit_date", token: parts[2]}
+		b.mu.Unlock()
+		return b.edit(ctx, q, "Отправьте дату в формате ДД.ММ.ГГГГ.", cancelMenu())
 	case "day":
 		return b.editDay(ctx, q, parts)
 	case "event":
@@ -60,8 +72,24 @@ func (b *Bot) scheduleEdit(ctx context.Context, q CallbackQuery, parts []string)
 			return b.invalid(ctx, q)
 		}
 		return b.editEventCard(ctx, q, parts[2])
+	case "targets":
+		if len(parts) != 4 || (parts[3] != "one" && parts[3] != "all") {
+			return b.invalid(ctx, q)
+		}
+		session, ok := b.editSession(q.From.ID, parts[2])
+		if !ok {
+			return b.edit(ctx, q, "Сеанс устарел. Выберите событие заново.", editBackMenu())
+		}
+		if parts[3] == "one" {
+			session.selectedKeys = []string{session.personKey}
+			session.targetsText = "• " + b.people[session.personKey].Name + " (только выбранное событие)"
+		} else {
+			session.selectedKeys = copyKeys(session.candidates)
+		}
+		b.saveEditSession(parts[2], session)
+		return b.showEditActions(ctx, q, parts[2], session)
 	case "field":
-		if len(parts) != 4 || (parts[3] != "title" && parts[3] != "time") {
+		if len(parts) != 4 || (parts[3] != "title" && parts[3] != "time" && parts[3] != "location") {
 			return b.invalid(ctx, q)
 		}
 		session, ok := b.editSession(q.From.ID, parts[2])
@@ -128,15 +156,35 @@ func (b *Bot) editDay(ctx context.Context, q CallbackQuery, parts []string) erro
 		return b.invalid(ctx, q)
 	}
 	from, to := calendar.DayRange(time.Now(), b.loc, offset)
-	events, _, err := person.Source.Events(from, to)
+	markup, text, err := b.editDayContent(q.From.ID, person.Key, from, to)
 	if err != nil {
 		return b.edit(ctx, q, "Не удалось загрузить расписание.", editBackMenu())
 	}
+	return b.edit(ctx, q, text, markup)
+}
+
+func (b *Bot) sendEditDay(ctx context.Context, chatID, actor int64, personKey string, date time.Time) error {
+	markup, text, err := b.editDayContent(actor, personKey, date, date.AddDate(0, 0, 1))
+	if err != nil {
+		return b.client.Send(ctx, chatID, "Не удалось загрузить расписание.", editBackMenu())
+	}
+	return b.client.Send(ctx, chatID, text, markup)
+}
+
+func (b *Bot) editDayContent(actor int64, personKey string, from, to time.Time) (Markup, string, error) {
+	person, ok := b.people[personKey]
+	if !ok {
+		return Markup{}, "", errors.New("неизвестный календарь")
+	}
+	events, _, err := person.Source.Events(from, to)
+	if err != nil {
+		return Markup{}, "", err
+	}
 	markup := Markup{}
 	for _, event := range events {
-		token, err := b.newEditSession(q.From.ID, person.Key, event)
+		token, err := b.newEditSession(actor, person.Key, event)
 		if err != nil {
-			return err
+			return Markup{}, "", err
 		}
 		label := event.Summary
 		if !event.AllDay {
@@ -146,9 +194,9 @@ func (b *Bot) editDay(ctx context.Context, q CallbackQuery, parts []string) erro
 	}
 	markup.InlineKeyboard = append(markup.InlineKeyboard, []Button{{Text: "Назад", CallbackData: "edit:person:" + person.Key}})
 	if len(events) == 0 {
-		return b.edit(ctx, q, "На эту дату событий нет.", markup)
+		return markup, "На эту дату событий нет.", nil
 	}
-	return b.edit(ctx, q, "Выберите событие", markup)
+	return markup, "Выберите событие", nil
 }
 
 func (b *Bot) editEventCard(ctx context.Context, q CallbackQuery, token string) error {
@@ -164,6 +212,16 @@ func (b *Bot) editEventCard(ctx context.Context, q CallbackQuery, token string) 
 		session.candidates = linked
 		session.targetsText = b.linkedTargetNames(linked)
 		b.saveEditSession(token, session)
+		if len(linked) > 1 {
+			markup := Markup{InlineKeyboard: [][]Button{
+				{{Text: "Только у " + b.people[session.personKey].Name, CallbackData: "edit:targets:" + token + ":one"}},
+				{{Text: "Во всех связанных", CallbackData: "edit:targets:" + token + ":all"}},
+				{{Text: "Отмена", CallbackData: "edit:menu"}},
+			}}
+			return b.edit(ctx, q, eventDescription(session.event, b.loc)+"\n\nСвязанные календари:\n"+session.targetsText+"\n\nГде изменить событие?", markup)
+		}
+		session.selectedKeys = []string{session.personKey}
+		b.saveEditSession(token, session)
 		return b.showEditActions(ctx, q, token, session)
 	}
 	match, err := b.findMatchingCopies(session)
@@ -177,6 +235,16 @@ func (b *Bot) editEventCard(ctx context.Context, q CallbackQuery, token string) 
 	session.needsLink = true
 	session.targetsText = b.matchTargetsText(match)
 	b.saveEditSession(token, session)
+	if len(match.copies) > 1 {
+		markup := Markup{InlineKeyboard: [][]Button{
+			{{Text: "Только у " + b.people[session.personKey].Name, CallbackData: "edit:targets:" + token + ":one"}},
+			{{Text: "Во всех найденных", CallbackData: "edit:targets:" + token + ":all"}},
+			{{Text: "Отмена", CallbackData: "edit:menu"}},
+		}}
+		return b.edit(ctx, q, eventDescription(session.event, b.loc)+"\n\nНайдены возможные копии:\n"+session.targetsText+"\n\nГде изменить событие?", markup)
+	}
+	session.selectedKeys = []string{session.personKey}
+	b.saveEditSession(token, session)
 	return b.showEditActions(ctx, q, token, session)
 }
 
@@ -187,6 +255,7 @@ func (b *Bot) showEditActions(ctx context.Context, q CallbackQuery, token string
 	}
 	rows = append(rows,
 		[]Button{{Text: "Изменить название", CallbackData: "edit:field:" + token + ":title"}},
+		[]Button{{Text: "Изменить место", CallbackData: "edit:field:" + token + ":location"}},
 		[]Button{{Text: "Назад", CallbackData: "edit:menu"}},
 	)
 	markup := Markup{InlineKeyboard: rows}
@@ -201,17 +270,27 @@ func (b *Bot) promptEditInput(ctx context.Context, q CallbackQuery, token, field
 	text := "Отправьте новое название."
 	if field == "time" {
 		text = "Отправьте новое время в формате 18:00-19:30."
+	} else if field == "location" {
+		text = "Отправьте новое место события. Чтобы удалить место, отправьте один дефис: -"
 	}
 	return b.edit(ctx, q, text+"\n\nОжидание действует 5 минут.", cancelMenu())
 }
 
 func (b *Bot) handleEditInput(ctx context.Context, message Message, state inputState) error {
+	if state.kind == "edit_date" {
+		date, err := time.ParseInLocation("02.01.2006", strings.TrimSpace(message.Text), b.loc)
+		if err != nil {
+			return b.client.Send(ctx, message.Chat.ID, "Неверная дата. Пример: 25.10.2026.", cancelMenu())
+		}
+		b.clearAwaiting(message.From.ID)
+		return b.sendEditDay(ctx, message.Chat.ID, message.From.ID, state.token, date)
+	}
 	session, ok := b.editSession(message.From.ID, state.token)
 	if !ok {
 		b.clearAwaiting(message.From.ID)
 		return b.client.Send(ctx, message.Chat.ID, "Сеанс устарел. Выберите событие заново.", editBackMenu())
 	}
-	request := schedule.Request{Actor: message.From.ID, SourceKey: session.personKey, SourceICalUID: session.event.UID, OriginalStart: session.event.OriginalStart, Scope: state.scope}
+	request := schedule.Request{Actor: message.From.ID, SourceKey: session.personKey, SourceICalUID: session.event.UID, OriginalStart: session.event.OriginalStart, Scope: state.scope, TargetKeys: session.selectedKeys}
 	switch state.kind {
 	case "edit_title":
 		title := strings.TrimSpace(message.Text)
@@ -225,6 +304,15 @@ func (b *Bot) handleEditInput(ctx context.Context, message Message, state inputS
 			return b.client.Send(ctx, message.Chat.ID, "Неверный формат. Пример: 18:00-19:30. Отправьте /cancel для отмены.", cancelMenu())
 		}
 		request.Start, request.End = &start, &end
+	case "edit_location":
+		location := strings.TrimSpace(message.Text)
+		if location == "-" {
+			location = ""
+		}
+		if len([]rune(location)) > 500 {
+			return b.client.Send(ctx, message.Chat.ID, "Место должно содержать не более 500 символов.", cancelMenu())
+		}
+		request.Location = &location
 	default:
 		return errors.New("неизвестное состояние ввода")
 	}
@@ -234,6 +322,12 @@ func (b *Bot) handleEditInput(ctx context.Context, message Message, state inputS
 	preview := "Проверьте изменение:\n\n" + eventDescription(session.event, b.loc)
 	if request.Summary != nil {
 		preview += "\nНовое название: " + *request.Summary
+	} else if request.Location != nil {
+		if *request.Location == "" {
+			preview += "\nНовое место: удалить"
+		} else {
+			preview += "\nНовое место: " + *request.Location
+		}
 	} else if request.Start != nil && request.End != nil {
 		preview += "\nНовое время: " + request.Start.In(b.loc).Format("15:04") + "–" + request.End.In(b.loc).Format("15:04")
 	}
@@ -248,8 +342,12 @@ func (b *Bot) handleEditInput(ctx context.Context, message Message, state inputS
 }
 
 func (b *Bot) formatEditResults(actor int64, results []schedule.CopyResult) string {
+	return b.formatCopyResults(actor, "Изменение завершено:", results)
+}
+
+func (b *Bot) formatCopyResults(actor int64, heading string, results []schedule.CopyResult) string {
 	var output strings.Builder
-	output.WriteString("Изменение завершено:")
+	output.WriteString(heading)
 	for _, result := range results {
 		if result.Err == nil {
 			fmt.Fprintf(&output, "\n%s ✅", result.Name)
@@ -403,10 +501,22 @@ func parseTimeRange(value string, eventStart time.Time, loc *time.Location) (tim
 }
 
 func eventDescription(event calendar.Event, loc *time.Location) string {
-	if event.AllDay {
-		return event.Summary + "\n" + event.Start.In(loc).Format("02.01.2006") + ", весь день"
+	location := ""
+	if strings.TrimSpace(event.Location) != "" {
+		location = "\nМесто: " + strings.TrimSpace(event.Location)
 	}
-	return event.Summary + "\n" + event.Start.In(loc).Format("02.01.2006 15:04") + "–" + event.End.In(loc).Format("15:04")
+	if event.AllDay {
+		return event.Summary + "\n" + event.Start.In(loc).Format("02.01.2006") + ", весь день" + location
+	}
+	return event.Summary + "\n" + event.Start.In(loc).Format("02.01.2006 15:04") + "–" + event.End.In(loc).Format("15:04") + location
+}
+
+func copyKeys(copies []storage.EventCopy) []string {
+	keys := make([]string, 0, len(copies))
+	for _, copy := range copies {
+		keys = append(keys, copy.CalendarKey)
+	}
+	return keys
 }
 
 func editBackMenu() Markup {

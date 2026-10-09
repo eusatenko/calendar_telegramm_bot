@@ -18,7 +18,15 @@ type fakeRepository struct {
 func (f *fakeRepository) EventGroup(string, string) ([]storage.EventCopy, error) {
 	return f.copies, nil
 }
+func (f *fakeRepository) LinkEventCopies(_ int64, copies []storage.EventCopy) error {
+	f.copies = append([]storage.EventCopy(nil), copies...)
+	return nil
+}
 func (f *fakeRepository) RecordEventEdit(actor int64, copies, failures int) error {
+	f.recorded = [3]int{int(actor), copies, failures}
+	return nil
+}
+func (f *fakeRepository) RecordEventCreate(actor int64, copies, failures int) error {
 	f.recorded = [3]int{int(actor), copies, failures}
 	return nil
 }
@@ -34,6 +42,13 @@ func (f *fakeWriter) Apply(_ context.Context, calendarID string, _ googleapi.Edi
 		return errors.New("temporary")
 	}
 	return nil
+}
+func (f *fakeWriter) Create(_ context.Context, calendarID string, _ googleapi.Create) (string, error) {
+	f.calls = append(f.calls, calendarID)
+	if calendarID == f.failCalendar {
+		return "", errors.New("temporary")
+	}
+	return "uid-" + calendarID, nil
 }
 
 func TestCoordinatorUpdatesEveryLinkedCopyAndKeepsPartialResult(t *testing.T) {
@@ -61,5 +76,36 @@ func TestCoordinatorRejectsUnlinkedEvent(t *testing.T) {
 	_, err := coordinator.Apply(context.Background(), Request{SourceKey: "anya", SourceICalUID: "a"})
 	if !errors.Is(err, ErrEventNotLinked) {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestCoordinatorUpdatesOnlySelectedCopy(t *testing.T) {
+	repository := &fakeRepository{copies: []storage.EventCopy{{CalendarKey: "anya", ICalUID: "a"}, {CalendarKey: "lesha", ICalUID: "b"}}}
+	writer := &fakeWriter{}
+	coordinator := NewCoordinator(repository, writer, []Target{{Key: "anya", Name: "Аня", CalendarID: "cal-a"}, {Key: "lesha", Name: "Лёша", CalendarID: "cal-b"}})
+	title := "Новое"
+	results, err := coordinator.Apply(context.Background(), Request{Actor: 7, SourceKey: "lesha", SourceICalUID: "b", Scope: googleapi.ScopeOccurrence, Summary: &title, TargetKeys: []string{"lesha"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || len(writer.calls) != 1 || writer.calls[0] != "cal-b" {
+		t.Fatalf("results=%+v calls=%+v", results, writer.calls)
+	}
+}
+
+func TestCoordinatorCreatesAndLinksSuccessfulCopies(t *testing.T) {
+	repository := &fakeRepository{}
+	writer := &fakeWriter{failCalendar: "cal-b"}
+	coordinator := NewCoordinator(repository, writer, []Target{{Key: "anya", Name: "Аня", CalendarID: "cal-a"}, {Key: "lesha", Name: "Лёша", CalendarID: "cal-b"}})
+	start := time.Date(2026, 10, 10, 13, 0, 0, 0, time.UTC)
+	results, err := coordinator.Create(context.Background(), CreateRequest{Actor: 7, TargetKeys: []string{"anya", "lesha"}, Summary: "Занятие", Start: start, End: start.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 || results[0].Err != nil || results[1].Err == nil {
+		t.Fatalf("results=%+v", results)
+	}
+	if len(repository.copies) != 1 || repository.copies[0].CalendarKey != "anya" {
+		t.Fatalf("linked=%+v", repository.copies)
 	}
 }

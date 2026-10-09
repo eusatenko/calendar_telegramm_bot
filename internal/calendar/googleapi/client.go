@@ -32,7 +32,14 @@ type Edit struct {
 	OriginalStart time.Time
 	Scope         Scope
 	Summary       *string
+	Location      *string
 	Start, End    *time.Time
+}
+
+type Create struct {
+	Summary     string
+	Start, End  time.Time
+	RepeatUntil *time.Time
 }
 
 type Client struct {
@@ -56,6 +63,7 @@ type apiEvent struct {
 	ETag             string      `json:"etag"`
 	ICalUID          string      `json:"iCalUID"`
 	Summary          string      `json:"summary"`
+	Location         string      `json:"location,omitempty"`
 	RecurringEventID string      `json:"recurringEventId"`
 	OriginalStart    apiDateTime `json:"originalStartTime"`
 	Start            apiDateTime `json:"start"`
@@ -95,6 +103,9 @@ func (c *Client) Apply(ctx context.Context, calendarID string, edit Edit) error 
 	if edit.Summary != nil {
 		patch["summary"] = strings.TrimSpace(*edit.Summary)
 	}
+	if edit.Location != nil {
+		patch["location"] = strings.TrimSpace(*edit.Location)
+	}
 	if edit.Start != nil || edit.End != nil {
 		if edit.Start == nil || edit.End == nil || !edit.End.After(*edit.Start) {
 			return errors.New("некорректный интервал события")
@@ -117,6 +128,30 @@ func (c *Client) Apply(ctx context.Context, calendarID string, edit Edit) error 
 		return errors.New("изменения не заданы")
 	}
 	return c.patchEvent(ctx, calendarID, target.ID, target.ETag, patch)
+}
+
+func (c *Client) Create(ctx context.Context, calendarID string, event Create) (string, error) {
+	if strings.TrimSpace(event.Summary) == "" || !event.End.After(event.Start) {
+		return "", errors.New("некорректное новое событие")
+	}
+	body := map[string]any{
+		"summary": strings.TrimSpace(event.Summary),
+		"start":   apiDateTime{DateTime: event.Start.Format(time.RFC3339), TimeZone: event.Start.Location().String()},
+		"end":     apiDateTime{DateTime: event.End.Format(time.RFC3339), TimeZone: event.End.Location().String()},
+	}
+	if event.RepeatUntil != nil {
+		until := time.Date(event.RepeatUntil.Year(), event.RepeatUntil.Month(), event.RepeatUntil.Day(), 23, 59, 59, 0, event.RepeatUntil.Location()).UTC()
+		body["recurrence"] = []string{"RRULE:FREQ=WEEKLY;UNTIL=" + until.Format("20060102T150405Z")}
+	}
+	var created apiEvent
+	path := "/calendars/" + url.PathEscape(calendarID) + "/events"
+	if err := c.doJSON(ctx, http.MethodPost, path, body, nil, &created); err != nil {
+		return "", err
+	}
+	if created.ICalUID == "" {
+		return "", errors.New("Google Calendar API: созданное событие без iCalUID")
+	}
+	return created.ICalUID, nil
 }
 
 func (c *Client) findParent(ctx context.Context, calendarID, iCalUID string) (apiEvent, error) {
