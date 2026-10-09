@@ -222,3 +222,38 @@ func TestUnauthorizedUserCannotUnlinkEventCopy(t *testing.T) {
 		t.Fatalf("remaining=%+v err=%v", remaining, err)
 	}
 }
+
+func TestNotificationChatCanOnlyBeManagedByAdmin(t *testing.T) {
+	s := openTest(t)
+	s.BootstrapAdmin(1)
+	if err := s.AddUser(1, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetNotificationChat(2, -100123); err == nil {
+		t.Fatal("non-admin configured notification chat")
+	}
+	if err := s.SetNotificationChat(1, -100123); err != nil {
+		t.Fatal(err)
+	}
+	chatID, configured, err := s.NotificationChat()
+	if err != nil || !configured || chatID != -100123 {
+		t.Fatalf("chat_id=%d configured=%v err=%v", chatID, configured, err)
+	}
+	if err = s.ClearNotificationChat(2); err == nil {
+		t.Fatal("non-admin cleared notification chat")
+	}
+	if err = s.ClearNotificationChat(1); err != nil {
+		t.Fatal(err)
+	}
+	if _, configured, err = s.NotificationChat(); err != nil || configured {
+		t.Fatalf("configured=%v err=%v", configured, err)
+	}
+}
+
+func TestNotificationChatRejectsPrivateChatID(t *testing.T) {
+	s := openTest(t)
+	s.BootstrapAdmin(1)
+	if err := s.SetNotificationChat(1, 123); err == nil {
+		t.Fatal("private chat was accepted as notification group")
+	}
+}

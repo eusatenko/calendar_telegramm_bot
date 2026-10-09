@@ -24,7 +24,9 @@ type User struct {
 	FirstName string `json:"first_name"`
 }
 type Chat struct {
-	ID int64 `json:"id"`
+	ID    int64  `json:"id"`
+	Type  string `json:"type"`
+	Title string `json:"title"`
 }
 type Message struct {
 	MessageID int    `json:"message_id"`

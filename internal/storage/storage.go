@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -76,6 +77,8 @@ CREATE TABLE IF NOT EXISTS event_copies(
  calendar_key TEXT NOT NULL, ical_uid TEXT NOT NULL,
  PRIMARY KEY(calendar_key,ical_uid), UNIQUE(group_id,calendar_key));
 CREATE INDEX IF NOT EXISTS idx_event_copies_group ON event_copies(group_id);
+CREATE TABLE IF NOT EXISTS bot_settings(
+ key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME NOT NULL, updated_by INTEGER NOT NULL);
 `)
 	return err
 }
@@ -191,6 +194,62 @@ func (s *Store) RecordEventDelete(actor int64, copyCount, failureCount int) erro
 	}
 	_, err := s.db.Exec(`INSERT INTO audit_log(actor_user_id,action,created_at,metadata) VALUES(?,'EVENT_DELETED',?,?)`, actor, s.now().UTC(), fmt.Sprintf(`{"copy_count":%d,"failure_count":%d}`, copyCount, failureCount))
 	return err
+}
+
+func (s *Store) SetNotificationChat(actor, chatID int64) error {
+	if chatID >= 0 {
+		return errors.New("нужен ID группового чата")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = requireAdminTx(tx, actor); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`INSERT INTO bot_settings(key,value,updated_at,updated_by) VALUES('notification_chat_id',?,?,?)
+ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,updated_by=excluded.updated_by`, strconv.FormatInt(chatID, 10), s.now().UTC(), actor); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`INSERT INTO audit_log(actor_user_id,action,created_at,metadata) VALUES(?,'NOTIFICATION_CHAT_SET',?,?)`, actor, s.now().UTC(), fmt.Sprintf(`{"chat_id":%d}`, chatID)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) NotificationChat() (int64, bool, error) {
+	var value string
+	err := s.db.QueryRow(`SELECT value FROM bot_settings WHERE key='notification_chat_id'`).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	chatID, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || chatID >= 0 {
+		return 0, false, errors.New("некорректный ID чата уведомлений")
+	}
+	return chatID, true, nil
+}
+
+func (s *Store) ClearNotificationChat(actor int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = requireAdminTx(tx, actor); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM bot_settings WHERE key='notification_chat_id'`); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`INSERT INTO audit_log(actor_user_id,action,created_at) VALUES(?,'NOTIFICATION_CHAT_CLEARED',?)`, actor, s.now().UTC()); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Store) BootstrapAdmin(id int64) error {
 	_, err := s.db.Exec(`INSERT INTO users(telegram_user_id,role,is_active,created_at) VALUES(?,?,1,?)

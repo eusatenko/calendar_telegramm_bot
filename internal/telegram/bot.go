@@ -135,6 +135,26 @@ func (b *Bot) handleMessage(ctx context.Context, m Message) error {
 		return b.client.Send(ctx, m.Chat.ID, "Доступ не предоставлен.", Markup{})
 	}
 	_ = b.store.Touch(m.From.ID, m.From.Username, m.From.FirstName)
+	if command := botCommand(m.Text, b.username); command == "notifications_here" {
+		if !admin {
+			return b.client.Send(ctx, m.Chat.ID, "Недостаточно прав.", Markup{})
+		}
+		if m.Chat.Type != "group" && m.Chat.Type != "supergroup" {
+			return b.client.Send(ctx, m.Chat.ID, "Эту команду нужно отправить в семейной группе.", Markup{})
+		}
+		if err = b.store.SetNotificationChat(m.From.ID, m.Chat.ID); err != nil {
+			return err
+		}
+		return b.client.Send(ctx, m.Chat.ID, "✅ Уведомления об изменениях расписания будут приходить в эту группу.", Markup{})
+	} else if command == "notifications_off" {
+		if !admin {
+			return b.client.Send(ctx, m.Chat.ID, "Недостаточно прав.", Markup{})
+		}
+		if err = b.store.ClearNotificationChat(m.From.ID); err != nil {
+			return err
+		}
+		return b.client.Send(ctx, m.Chat.ID, "Уведомления отключены.", Markup{})
+	}
 	if m.Text == "/cancel" {
 		b.clearAwaiting(m.From.ID)
 		if admin {
@@ -375,6 +395,18 @@ func (b *Bot) awaitingState(id int64) (inputState, bool) {
 	return s, ok
 }
 func (b *Bot) clearAwaiting(id int64) { b.mu.Lock(); delete(b.awaiting, id); b.mu.Unlock() }
+func botCommand(text, username string) string {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) == 0 || !strings.HasPrefix(fields[0], "/") {
+		return ""
+	}
+	command := strings.TrimPrefix(fields[0], "/")
+	parts := strings.SplitN(command, "@", 2)
+	if len(parts) == 2 && !strings.EqualFold(parts[1], username) {
+		return ""
+	}
+	return strings.ToLower(parts[0])
+}
 func mainMenu(admin bool, editing ...bool) Markup {
 	m := Markup{InlineKeyboard: [][]Button{{{Text: "Сегодня всех", CallbackData: "all:today"}, {Text: "Завтра всех", CallbackData: "all:tomorrow"}}, {{Text: "Аня", CallbackData: "person:anya"}, {Text: "Лёша", CallbackData: "person:lesha"}}, {{Text: "Саша", CallbackData: "person:sasha"}, {Text: "Настя", CallbackData: "person:nastya"}}}}
 	if len(editing) > 0 && editing[0] {

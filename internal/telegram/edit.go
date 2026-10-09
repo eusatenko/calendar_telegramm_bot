@@ -160,6 +160,7 @@ func (b *Bot) scheduleEdit(ctx context.Context, q CallbackQuery, parts []string)
 			return b.edit(ctx, q, "Сеанс устарел. Выберите событие заново.", editBackMenu())
 		}
 		isDelete := session.pending.Delete
+		pending := *session.pending
 		if session.needsLink && !isDelete {
 			if err := b.store.LinkEventCopies(q.From.ID, session.candidates); err != nil {
 				return err
@@ -174,13 +175,18 @@ func (b *Bot) scheduleEdit(ctx context.Context, q CallbackQuery, parts []string)
 			}
 			return err
 		}
+		notificationErr := b.notifyEdit(ctx, q.From, session, pending, results)
 		session.pending = nil
 		b.saveEditSession(parts[2], session)
 		heading := "Изменение завершено:"
 		if isDelete {
 			heading = "Удаление завершено:"
 		}
-		return b.edit(ctx, q, b.formatCopyResults(q.From.ID, heading, results), editBackMenu())
+		text := b.formatCopyResults(q.From.ID, heading, results)
+		if notificationErr != nil {
+			text += "\n⚠️ Не удалось отправить уведомление в семейную группу."
+		}
+		return b.edit(ctx, q, text, editBackMenu())
 	default:
 		return b.invalid(ctx, q)
 	}

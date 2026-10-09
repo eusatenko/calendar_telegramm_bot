@@ -101,8 +101,13 @@ func (b *Bot) scheduleCreate(ctx context.Context, q CallbackQuery, parts []strin
 		if err != nil {
 			return err
 		}
+		notificationErr := b.notifyCreate(ctx, q.From, session, results)
 		b.deleteCreateSession(parts[2])
-		return b.edit(ctx, q, b.formatCopyResults(q.From.ID, "Создание завершено:", results), mainMenuButton())
+		text := b.formatCopyResults(q.From.ID, "Создание завершено:", results)
+		if notificationErr != nil {
+			text += "\n⚠️ Не удалось отправить уведомление в семейную группу."
+		}
+		return b.edit(ctx, q, text, mainMenuButton())
 	default:
 		return b.invalid(ctx, q)
 	}

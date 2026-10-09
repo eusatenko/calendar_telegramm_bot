@@ -414,3 +414,100 @@ func TestParseTimeRangeSupportsOvernight(t *testing.T) {
 		t.Fatalf("%v - %v", start, end)
 	}
 }
+
+func TestAdminConfiguresNotificationGroupWithCommand(t *testing.T) {
+	bot, store, calls := botFixture(t)
+	if err := store.BootstrapAdmin(1); err != nil {
+		t.Fatal(err)
+	}
+	message := Message{From: User{ID: 1}, Chat: Chat{ID: -100123, Type: "supergroup", Title: "Семья"}, Text: "/notifications_here@family_bot"}
+	if err := bot.handleMessage(context.Background(), message); err != nil {
+		t.Fatal(err)
+	}
+	chatID, configured, err := store.NotificationChat()
+	if err != nil || !configured || chatID != message.Chat.ID {
+		t.Fatalf("chat_id=%d configured=%v err=%v", chatID, configured, err)
+	}
+	if len(*calls) == 0 || !strings.Contains(fmt.Sprint((*calls)[len(*calls)-1].body["text"]), "Уведомления") {
+		t.Fatalf("calls=%+v", *calls)
+	}
+}
+
+func TestNormalUserCannotConfigureNotificationGroup(t *testing.T) {
+	bot, store, _ := botFixture(t)
+	if err := store.BootstrapAdmin(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddUser(1, 2); err != nil {
+		t.Fatal(err)
+	}
+	message := Message{From: User{ID: 2}, Chat: Chat{ID: -100123, Type: "supergroup"}, Text: "/notifications_here"}
+	if err := bot.handleMessage(context.Background(), message); err != nil {
+		t.Fatal(err)
+	}
+	if _, configured, err := store.NotificationChat(); err != nil || configured {
+		t.Fatalf("configured=%v err=%v", configured, err)
+	}
+}
+
+func TestNotificationCommandRejectsPrivateChat(t *testing.T) {
+	bot, store, _ := botFixture(t)
+	if err := store.BootstrapAdmin(1); err != nil {
+		t.Fatal(err)
+	}
+	message := Message{From: User{ID: 1}, Chat: Chat{ID: 1, Type: "private"}, Text: "/notifications_here"}
+	if err := bot.handleMessage(context.Background(), message); err != nil {
+		t.Fatal(err)
+	}
+	if _, configured, err := store.NotificationChat(); err != nil || configured {
+		t.Fatalf("configured=%v err=%v", configured, err)
+	}
+}
+
+func TestCreateNotificationIsSentToConfiguredGroup(t *testing.T) {
+	bot, store, calls := botFixture(t)
+	if err := store.BootstrapAdmin(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetNotificationChat(1, -100123); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 10, 12, 18, 0, 0, 0, time.UTC)
+	session := createSession{summary: "Танцы", location: "Школа", start: start, end: start.Add(time.Hour)}
+	results := []schedule.CopyResult{{Key: "anya", Name: "Аня"}, {Key: "lesha", Name: "Лёша", Err: errors.New("temporary")}}
+	if err := bot.notifyCreate(context.Background(), User{ID: 2, FirstName: "Евгений"}, session, results); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("calls=%+v", *calls)
+	}
+	body := (*calls)[0].body
+	text := fmt.Sprint(body["text"])
+	chatID, ok := body["chat_id"].(float64)
+	if !ok || int64(chatID) != -100123 || !strings.Contains(text, "Событие добавлено") || !strings.Contains(text, "Аня ✅") || !strings.Contains(text, "Лёша ❌") || !strings.Contains(text, "Изменил: Евгений") {
+		t.Fatalf("body=%+v", body)
+	}
+}
+
+func TestAllFailedMutationDoesNotNotifyFamily(t *testing.T) {
+	bot, store, calls := botFixture(t)
+	if err := store.BootstrapAdmin(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetNotificationChat(1, -100123); err != nil {
+		t.Fatal(err)
+	}
+	results := []schedule.CopyResult{{Key: "anya", Name: "Аня", Err: errors.New("temporary")}}
+	if err := bot.notifyEdit(context.Background(), User{ID: 1}, editSession{}, schedule.Request{}, results); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("unexpected notification: %+v", *calls)
+	}
+}
+
+func TestBotCommandIgnoresAnotherBotMention(t *testing.T) {
+	if got := botCommand("/notifications_here@another_bot", "family_bot"); got != "" {
+		t.Fatalf("command=%q", got)
+	}
+}
