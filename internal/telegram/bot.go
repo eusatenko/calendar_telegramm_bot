@@ -166,11 +166,11 @@ func (b *Bot) handleMessage(ctx context.Context, m Message) error {
 		if strings.HasPrefix(state.kind, "edit_") {
 			return b.handleEditInput(ctx, m, state)
 		}
-		if !admin {
-			return b.client.Send(ctx, m.Chat.ID, "Недостаточно прав.", mainMenu(false, b.editor != nil))
-		}
 		if strings.HasPrefix(state.kind, "create_") {
 			return b.handleCreateInput(ctx, m, state)
+		}
+		if !admin {
+			return b.client.Send(ctx, m.Chat.ID, "Недостаточно прав.", mainMenu(false, b.editor != nil))
 		}
 		id, e := strconv.ParseInt(strings.TrimSpace(m.Text), 10, 64)
 		if e != nil || id <= 0 {

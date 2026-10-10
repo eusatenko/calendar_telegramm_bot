@@ -143,6 +143,41 @@ func TestAuthorizedUserCanOpenCreation(t *testing.T) {
 	}
 }
 
+func TestAuthorizedUserCanEnterCreationData(t *testing.T) {
+	bot, store, calls := botFixture(t)
+	if err := store.BootstrapAdmin(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddUser(1, 2); err != nil {
+		t.Fatal(err)
+	}
+	token := "user-create-token"
+	bot.createSessions[token] = createSession{
+		expires: time.Now().Add(time.Minute),
+		actor:   2,
+		date:    time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC),
+		targets: map[string]bool{"anya": true},
+	}
+	bot.awaiting[2] = inputState{expires: time.Now().Add(time.Minute), kind: "create_title", token: token}
+
+	message := Message{From: User{ID: 2}, Chat: Chat{ID: 2, Type: "private"}, Text: "Танцы"}
+	if err := bot.handleMessage(context.Background(), message); err != nil {
+		t.Fatal(err)
+	}
+
+	session, ok := bot.createSession(2, token)
+	if !ok || session.summary != "Танцы" {
+		t.Fatalf("session=%+v ok=%v", session, ok)
+	}
+	state, ok := bot.awaitingState(2)
+	if !ok || state.kind != "create_time" {
+		t.Fatalf("state=%+v ok=%v", state, ok)
+	}
+	if len(*calls) == 0 || (*calls)[len(*calls)-1].body["text"] != "Отправьте время в формате 18:00-19:30." {
+		t.Fatalf("calls=%+v", *calls)
+	}
+}
+
 func TestAuthorizedUserCanOpenEditing(t *testing.T) {
 	bot, store, calls := botFixture(t)
 	if err := store.BootstrapAdmin(1); err != nil {
