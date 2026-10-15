@@ -97,6 +97,16 @@ func TestMenusHideAdminForUser(t *testing.T) {
 	}
 }
 
+func TestMainMenuIncludesAllOnDate(t *testing.T) {
+	menu, err := json.Marshal(mainMenu(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(menu), "На дату всех") || !strings.Contains(string(menu), "all:date") {
+		t.Fatalf("menu=%s", menu)
+	}
+}
+
 func TestEditingButtonIsFeatureGated(t *testing.T) {
 	disabled, _ := json.Marshal(mainMenu(false, false))
 	enabled, _ := json.Marshal(mainMenu(false, true))
@@ -110,7 +120,7 @@ func TestEditingButtonIsFeatureGated(t *testing.T) {
 	if !strings.Contains(string(enabled), "Добавить событие") {
 		t.Fatal("create button missing for authorized user")
 	}
-	if len(adminEnabled.InlineKeyboard) < 4 || len(adminEnabled.InlineKeyboard[3]) != 2 || adminEnabled.InlineKeyboard[3][0].CallbackData != "edit:menu" || adminEnabled.InlineKeyboard[3][1].CallbackData != "create:menu" {
+	if len(adminEnabled.InlineKeyboard) < 5 || len(adminEnabled.InlineKeyboard[4]) != 2 || adminEnabled.InlineKeyboard[4][0].CallbackData != "edit:menu" || adminEnabled.InlineKeyboard[4][1].CallbackData != "create:menu" {
 		t.Fatalf("calendar actions are not adjacent: %+v", adminEnabled.InlineKeyboard)
 	}
 	admin, _ := json.Marshal(adminMenu())
@@ -555,6 +565,47 @@ func TestAllScheduleMenuTogglesViewAboveMainMenu(t *testing.T) {
 	chronological := allScheduleMenu("today", "chronological")
 	if chronological.InlineKeyboard[0][0].Text != "По людям" || chronological.InlineKeyboard[0][0].CallbackData != "all:today:people" {
 		t.Fatalf("chronological menu=%+v", chronological)
+	}
+}
+
+func TestAuthorizedUserCanRequestAllScheduleForDate(t *testing.T) {
+	bot, store, calls := botFixture(t)
+	if err := store.BootstrapAdmin(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddUser(1, 2); err != nil {
+		t.Fatal(err)
+	}
+	date := time.Date(2026, 10, 25, 0, 0, 0, 0, time.UTC)
+	bot.people = map[string]Person{
+		"anya": {Key: "anya", Name: "Аня", Source: fixedSource{events: []calendar.Event{{Summary: "Аня — Танцы", Start: date.Add(10 * time.Hour), End: date.Add(11 * time.Hour)}}}},
+	}
+	bot.order = []string{"anya"}
+	query := CallbackQuery{ID: "q", From: User{ID: 2}, Message: Message{MessageID: 7, Chat: Chat{ID: 2}}, Data: "all:date"}
+	if err := bot.handleCallback(context.Background(), query); err != nil {
+		t.Fatal(err)
+	}
+	state, ok := bot.awaitingState(2)
+	if !ok || state.kind != "all_date" {
+		t.Fatalf("state=%+v ok=%v", state, ok)
+	}
+	if err := bot.handleMessage(context.Background(), Message{From: User{ID: 2}, Chat: Chat{ID: 2, Type: "private"}, Text: "25.10.2026"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := bot.awaitingState(2); ok {
+		t.Fatal("date input state was not cleared")
+	}
+	var rendered []string
+	for _, call := range *calls {
+		body, err := json.Marshal(call.body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rendered = append(rendered, string(body))
+	}
+	text := strings.Join(rendered, "\n")
+	if !strings.Contains(text, "25.10.2026 — расписание всех") || !strings.Contains(text, "10:00–11:00 Аня — Танцы") || !strings.Contains(text, "all:date:2026-10-25:chronological") {
+		t.Fatalf("calls=%s", text)
 	}
 }
 
