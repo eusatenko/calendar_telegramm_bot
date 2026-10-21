@@ -89,7 +89,7 @@ func (b *Bot) scheduleCreate(ctx context.Context, q CallbackQuery, parts []strin
 		session.repeatUntil = nil
 		b.saveCreateSession(parts[2], session)
 		return b.showCreatePreview(ctx, q, parts[2], session)
-	case "confirm":
+	case "confirm", "retry":
 		if len(parts) != 3 {
 			return b.invalid(ctx, q)
 		}
@@ -97,17 +97,30 @@ func (b *Bot) scheduleCreate(ctx context.Context, q CallbackQuery, parts []strin
 		if !ok || session.summary == "" || session.start.IsZero() {
 			return b.edit(ctx, q, "Сеанс устарел.", mainMenuButton())
 		}
-		results, err := b.editor.Create(ctx, schedule.CreateRequest{Actor: q.From.ID, TargetKeys: selectedCreateKeys(session, b.order), Summary: session.summary, Location: session.location, Start: session.start, End: session.end, RepeatUntil: session.repeatUntil})
+		targetKeys := selectedCreateKeys(session, b.order)
+		results, err := b.editor.Create(ctx, schedule.CreateRequest{Actor: q.From.ID, TargetKeys: targetKeys, Summary: session.summary, Location: session.location, Start: session.start, End: session.end, RepeatUntil: session.repeatUntil})
 		if err != nil {
 			return err
 		}
 		notificationErr := b.notifyCreate(ctx, q.From, session, results)
-		b.deleteCreateSession(parts[2])
+		failedKeys := failedCreateKeys(targetKeys, results)
+		markup := mainMenuButton()
+		if len(failedKeys) == 0 {
+			b.deleteCreateSession(parts[2])
+		} else {
+			session.targets = make(map[string]bool, len(failedKeys))
+			for _, key := range failedKeys {
+				session.targets[key] = true
+			}
+			session.expires = time.Now().Add(15 * time.Minute)
+			b.saveCreateSession(parts[2], session)
+			markup = createRetryMarkup(parts[2])
+		}
 		text := b.formatCopyResults(q.From.ID, "Создание завершено:", results)
 		if notificationErr != nil {
 			text += "\n⚠️ Не удалось отправить уведомление в семейную группу."
 		}
-		return b.edit(ctx, q, text, mainMenuButton())
+		return b.edit(ctx, q, text, markup)
 	default:
 		return b.invalid(ctx, q)
 	}
@@ -226,6 +239,10 @@ func createConfirmMarkup(token string) Markup {
 	return Markup{InlineKeyboard: [][]Button{{{Text: "Подтвердить", CallbackData: "create:confirm:" + token}}, {{Text: "Отмена", CallbackData: "main"}}}}
 }
 
+func createRetryMarkup(token string) Markup {
+	return Markup{InlineKeyboard: [][]Button{{{Text: "🔄 Повторить", CallbackData: "create:retry:" + token}}, {{Text: "Главное меню", CallbackData: "main"}}}}
+}
+
 func createCancelMenu() Markup {
 	return Markup{InlineKeyboard: [][]Button{{{Text: "Отмена", CallbackData: "main"}}}}
 }
@@ -275,6 +292,25 @@ func selectedCreateKeys(session createSession, order []string) []string {
 	var keys []string
 	for _, key := range order {
 		if session.targets[key] {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+func failedCreateKeys(requested []string, results []schedule.CopyResult) []string {
+	failed := make(map[string]bool, len(requested))
+	for _, key := range requested {
+		failed[key] = true
+	}
+	for _, result := range results {
+		if result.Err == nil {
+			delete(failed, result.Key)
+		}
+	}
+	keys := make([]string, 0, len(failed))
+	for _, key := range requested {
+		if failed[key] {
 			keys = append(keys, key)
 		}
 	}

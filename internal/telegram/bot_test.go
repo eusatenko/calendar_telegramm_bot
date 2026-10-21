@@ -233,6 +233,22 @@ func (e *recordingEditor) Create(context.Context, schedule.CreateRequest) ([]sch
 	return []schedule.CopyResult{{Key: "anya", Name: "Аня"}}, nil
 }
 
+type retryCreateEditor struct {
+	requests []schedule.CreateRequest
+}
+
+func (e *retryCreateEditor) Apply(context.Context, schedule.Request) ([]schedule.CopyResult, error) {
+	return nil, errors.New("unexpected Apply call")
+}
+
+func (e *retryCreateEditor) Create(_ context.Context, request schedule.CreateRequest) ([]schedule.CopyResult, error) {
+	e.requests = append(e.requests, request)
+	if len(e.requests) == 1 {
+		return []schedule.CopyResult{{Key: "anya", Name: "Аня", Err: errors.New("temporary")}, {Key: "lesha", Name: "Лёша"}}, nil
+	}
+	return []schedule.CopyResult{{Key: "anya", Name: "Аня"}}, nil
+}
+
 func TestFindMatchingCopiesUsesExactTitleAndInterval(t *testing.T) {
 	bot, _, _ := botFixture(t)
 	start := time.Date(2026, 10, 12, 18, 0, 0, 0, time.UTC)
@@ -330,6 +346,66 @@ func TestSelectedCreateKeysPreserveCalendarOrder(t *testing.T) {
 	got := selectedCreateKeys(session, []string{"anya", "lesha", "sasha", "nastya"})
 	if strings.Join(got, ",") != "anya,sasha" {
 		t.Fatalf("keys=%v", got)
+	}
+}
+
+func TestCreateRetryRepeatsOnlyFailedCalendars(t *testing.T) {
+	bot, store, calls := botFixture(t)
+	if err := store.BootstrapAdmin(1); err != nil {
+		t.Fatal(err)
+	}
+	bot.people = map[string]Person{
+		"anya":  {Key: "anya", Name: "Аня"},
+		"lesha": {Key: "lesha", Name: "Лёша"},
+	}
+	bot.order = []string{"anya", "lesha"}
+	editor := &retryCreateEditor{}
+	bot.EnableScheduleEditing(editor)
+	token := "retry-token"
+	start := time.Date(2026, 10, 25, 10, 0, 0, 0, time.UTC)
+	bot.createSessions[token] = createSession{
+		expires: time.Now().Add(time.Minute),
+		actor:   1,
+		targets: map[string]bool{"anya": true, "lesha": true},
+		summary: "Танцы",
+		start:   start,
+		end:     start.Add(time.Hour),
+	}
+	query := CallbackQuery{ID: "q", From: User{ID: 1}, Message: Message{MessageID: 7, Chat: Chat{ID: 1}}}
+
+	if err := bot.scheduleCreate(context.Background(), query, []string{"create", "confirm", token}); err != nil {
+		t.Fatal(err)
+	}
+	if len(editor.requests) != 1 || strings.Join(editor.requests[0].TargetKeys, ",") != "anya,lesha" {
+		t.Fatalf("requests=%+v", editor.requests)
+	}
+	session, ok := bot.createSession(1, token)
+	if !ok || strings.Join(selectedCreateKeys(session, bot.order), ",") != "anya" {
+		t.Fatalf("session=%+v ok=%v", session, ok)
+	}
+	firstResult, err := json.Marshal((*calls)[len(*calls)-1].body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(firstResult), "Повторить") || !strings.Contains(string(firstResult), "create:retry:"+token) {
+		t.Fatalf("result=%s", firstResult)
+	}
+
+	if err := bot.scheduleCreate(context.Background(), query, []string{"create", "retry", token}); err != nil {
+		t.Fatal(err)
+	}
+	if len(editor.requests) != 2 || strings.Join(editor.requests[1].TargetKeys, ",") != "anya" {
+		t.Fatalf("requests=%+v", editor.requests)
+	}
+	if _, ok := bot.createSession(1, token); ok {
+		t.Fatal("completed retry session was not deleted")
+	}
+	secondResult, err := json.Marshal((*calls)[len(*calls)-1].body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(secondResult), "Повторить") {
+		t.Fatalf("result=%s", secondResult)
 	}
 }
 
