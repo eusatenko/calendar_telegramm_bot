@@ -1,0 +1,14 @@
+usatenko-bf.com {
+	root * /var/www/usatenko-bf.com
+	encode gzip
+	file_server
+}
+
+tg.usatenko-bf.com {
+	encode gzip
+
+	reverse_proxy 127.0.0.1:18080 {
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+}
