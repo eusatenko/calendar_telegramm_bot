@@ -491,8 +491,8 @@ func mainMenu(admin bool, features ...bool) Markup {
 	}
 	if len(features) > 1 && features[1] {
 		m.InlineKeyboard = append(m.InlineKeyboard, []Button{
-			{Text: "Android-виджет", CallbackData: "widget:pair"},
 			{Text: "Скачать приложение", URL: "https://usatenko-bf.com/downloads/family-calendar-1.1.0.apk"},
+			{Text: "Первый вход", CallbackData: "widget:pair"},
 		})
 	}
 	if admin {

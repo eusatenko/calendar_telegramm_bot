@@ -145,11 +145,11 @@ func TestAuthorizedUserCanCreateWidgetPairingLink(t *testing.T) {
 	}
 	bot.EnableWidgetPairing(fixedWidgetPairer{})
 	menu, _ := json.Marshal(mainMenu(false, false, true))
-	if !strings.Contains(string(menu), "Android-виджет") || !strings.Contains(string(menu), "Скачать приложение") || !strings.Contains(string(menu), "family-calendar-1.1.0.apk") {
+	if !strings.Contains(string(menu), "Первый вход") || !strings.Contains(string(menu), "Скачать приложение") || !strings.Contains(string(menu), "family-calendar-1.1.0.apk") {
 		t.Fatalf("widget button missing: %s", menu)
 	}
 	widgetRow := mainMenu(false, false, true).InlineKeyboard[4]
-	if len(widgetRow) != 2 || widgetRow[0].CallbackData != "widget:pair" || widgetRow[1].URL == "" {
+	if len(widgetRow) != 2 || widgetRow[0].URL == "" || widgetRow[1].CallbackData != "widget:pair" {
 		t.Fatalf("widget actions are not adjacent: %+v", widgetRow)
 	}
 	q := CallbackQuery{ID: "q", From: User{ID: 2}, Message: Message{MessageID: 7, Chat: Chat{ID: 2, Type: "private"}}, Data: "widget:pair"}
