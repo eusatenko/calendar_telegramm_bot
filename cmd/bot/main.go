@@ -74,11 +74,16 @@ func main() {
 		bot.EnableScheduleEditing(schedule.NewCoordinator(store, writer, targets))
 		log.Info("calendar editing enabled")
 	}
+	var widgetPairing *widgetapi.Pairing
+	if cfg.WidgetAPI.Enabled {
+		widgetPairing = widgetapi.NewPairing(cfg.WidgetAPI.Token, cfg.WidgetAPI.PublicBaseURL, cfg.WidgetAPI.PairTTL)
+		bot.EnableWidgetPairing(widgetPairing)
+	}
 	var widgetServer *http.Server
 	if cfg.WidgetAPI.Enabled {
 		widgetServer = &http.Server{
 			Addr:              cfg.WidgetAPI.ListenAddress,
-			Handler:           widgetapi.New(cfg.WidgetAPI.Token, widgetPeople, cfg.Timezone, log),
+			Handler:           widgetapi.New(cfg.WidgetAPI.Token, widgetPeople, cfg.Timezone, log, widgetPairing),
 			ReadHeaderTimeout: 5 * time.Second,
 			ReadTimeout:       15 * time.Second,
 			WriteTimeout:      20 * time.Second,

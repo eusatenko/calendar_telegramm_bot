@@ -53,6 +53,9 @@ type ScheduleEditor interface {
 	Apply(context.Context, schedule.Request) ([]schedule.CopyResult, error)
 	Create(context.Context, schedule.CreateRequest) ([]schedule.CopyResult, error)
 }
+type WidgetPairer interface {
+	CreatePairingURL(actorID int64) (string, time.Time, error)
+}
 type Bot struct {
 	client         *Client
 	store          *storage.Store
@@ -67,6 +70,7 @@ type Bot struct {
 	editor         ScheduleEditor
 	editSessions   map[string]editSession
 	createSessions map[string]createSession
+	widgetPairer   WidgetPairer
 }
 
 func NewBot(client *Client, store *storage.Store, people []Person, loc *time.Location, inviteTTL time.Duration, username string, log *slog.Logger) *Bot {
@@ -80,6 +84,7 @@ func NewBot(client *Client, store *storage.Store, people []Person, loc *time.Loc
 }
 
 func (b *Bot) EnableScheduleEditing(editor ScheduleEditor) { b.editor = editor }
+func (b *Bot) EnableWidgetPairing(pairer WidgetPairer)     { b.widgetPairer = pairer }
 
 func (b *Bot) Run(ctx context.Context) error {
 	offset := 0
@@ -125,7 +130,7 @@ func (b *Bot) handleMessage(ctx context.Context, m Message) error {
 		if err := b.store.RedeemInvite(token, m.From.ID, m.From.Username, m.From.FirstName); err != nil {
 			return b.client.Send(ctx, m.Chat.ID, "Приглашение недействительно, просрочено или уже использовано.", Markup{})
 		}
-		return b.client.Send(ctx, m.Chat.ID, "Доступ предоставлен.", mainMenu(false, b.editor != nil))
+		return b.client.Send(ctx, m.Chat.ID, "Доступ предоставлен.", mainMenu(false, b.editor != nil, b.widgetPairer != nil))
 	}
 	authorized, admin, err := b.store.Authorized(m.From.ID)
 	if err != nil {
@@ -160,7 +165,7 @@ func (b *Bot) handleMessage(ctx context.Context, m Message) error {
 		if admin {
 			return b.client.Send(ctx, m.Chat.ID, "Действие отменено.", adminMenu())
 		}
-		return b.client.Send(ctx, m.Chat.ID, "Действие отменено.", mainMenu(false, b.editor != nil))
+		return b.client.Send(ctx, m.Chat.ID, "Действие отменено.", mainMenu(false, b.editor != nil, b.widgetPairer != nil))
 	}
 	if state, ok := b.awaitingState(m.From.ID); ok {
 		if strings.HasPrefix(state.kind, "edit_") {
@@ -173,14 +178,14 @@ func (b *Bot) handleMessage(ctx context.Context, m Message) error {
 			return b.handleAllDateInput(ctx, m)
 		}
 		if !admin {
-			return b.client.Send(ctx, m.Chat.ID, "Недостаточно прав.", mainMenu(false, b.editor != nil))
+			return b.client.Send(ctx, m.Chat.ID, "Недостаточно прав.", mainMenu(false, b.editor != nil, b.widgetPairer != nil))
 		}
 		id, e := strconv.ParseInt(strings.TrimSpace(m.Text), 10, 64)
 		if e != nil || id <= 0 {
 			return b.client.Send(ctx, m.Chat.ID, "Нужен положительный числовой Telegram ID. Отправьте /cancel для отмены.", cancelMenu())
 		}
 		if e = b.store.RequireAdmin(ctx, m.From.ID); e != nil {
-			return b.client.Send(ctx, m.Chat.ID, "Недостаточно прав.", mainMenu(false))
+			return b.client.Send(ctx, m.Chat.ID, "Недостаточно прав.", mainMenu(false, b.editor != nil, b.widgetPairer != nil))
 		}
 		if e = b.store.AddUser(m.From.ID, id); e != nil {
 			return e
@@ -188,7 +193,7 @@ func (b *Bot) handleMessage(ctx context.Context, m Message) error {
 		b.clearAwaiting(m.From.ID)
 		return b.client.Send(ctx, m.Chat.ID, fmt.Sprintf("Пользователь %d добавлен или активирован.", id), adminMenu())
 	}
-	return b.client.Send(ctx, m.Chat.ID, "Семейное расписание", mainMenu(admin, b.editor != nil))
+	return b.client.Send(ctx, m.Chat.ID, "Семейное расписание", mainMenu(admin, b.editor != nil, b.widgetPairer != nil))
 }
 func (b *Bot) handleCallback(ctx context.Context, q CallbackQuery) error {
 	defer func() { _ = b.client.Answer(context.Background(), q.ID, "") }()
@@ -206,7 +211,7 @@ func (b *Bot) handleCallback(ctx context.Context, q CallbackQuery) error {
 			return b.invalid(ctx, q)
 		}
 		b.clearAwaiting(q.From.ID)
-		return b.edit(ctx, q, "Семейное расписание", mainMenu(admin, b.editor != nil))
+		return b.edit(ctx, q, "Семейное расписание", mainMenu(admin, b.editor != nil, b.widgetPairer != nil))
 	case "person":
 		if len(parts) == 2 {
 			if _, ok := b.people[parts[1]]; !ok {
@@ -259,6 +264,19 @@ func (b *Bot) handleCallback(ctx context.Context, q CallbackQuery) error {
 			return b.denied(ctx, q)
 		}
 		return b.scheduleCreate(ctx, q, parts)
+	case "widget":
+		if b.widgetPairer == nil || len(parts) != 2 || parts[1] != "pair" {
+			return b.denied(ctx, q)
+		}
+		if q.Message.Chat.Type == "group" || q.Message.Chat.Type == "supergroup" {
+			return b.edit(ctx, q, "Для безопасного подключения откройте личный чат с ботом.", mainMenuButton())
+		}
+		link, expires, pairErr := b.widgetPairer.CreatePairingURL(q.From.ID)
+		if pairErr != nil {
+			return pairErr
+		}
+		markup := Markup{InlineKeyboard: [][]Button{{{Text: "Подключить Family Calendar", URL: link}}, {{Text: "Главное меню", CallbackData: "main"}}}}
+		return b.edit(ctx, q, "Откройте ссылку на том Android-телефоне, где установлен Family Calendar.\n\nСсылка одноразовая и действует до "+expires.In(b.loc).Format("15:04")+".", markup)
 	default:
 		return b.invalid(ctx, q)
 	}
@@ -465,11 +483,14 @@ func botCommand(text, username string) string {
 	}
 	return strings.ToLower(parts[0])
 }
-func mainMenu(admin bool, editing ...bool) Markup {
+func mainMenu(admin bool, features ...bool) Markup {
 	m := Markup{InlineKeyboard: [][]Button{{{Text: "Сегодня всех", CallbackData: "all:today"}, {Text: "Завтра всех", CallbackData: "all:tomorrow"}}, {{Text: "На дату всех", CallbackData: "all:date"}}, {{Text: "Аня", CallbackData: "person:anya"}, {Text: "Лёша", CallbackData: "person:lesha"}}, {{Text: "Саша", CallbackData: "person:sasha"}, {Text: "Настя", CallbackData: "person:nastya"}}}}
-	if len(editing) > 0 && editing[0] {
+	if len(features) > 0 && features[0] {
 		calendarActions := []Button{{Text: "Изменить расписание", CallbackData: "edit:menu"}, {Text: "Добавить событие", CallbackData: "create:menu"}}
 		m.InlineKeyboard = append(m.InlineKeyboard, calendarActions)
+	}
+	if len(features) > 1 && features[1] {
+		m.InlineKeyboard = append(m.InlineKeyboard, []Button{{Text: "Android-виджет", CallbackData: "widget:pair"}})
 	}
 	if admin {
 		m.InlineKeyboard = append(m.InlineKeyboard, []Button{{Text: "Управление доступом", CallbackData: "admin:menu"}})

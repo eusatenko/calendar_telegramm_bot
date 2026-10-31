@@ -8,6 +8,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
@@ -55,6 +56,38 @@ final class ApiClient {
             String body = readAll(connection.getInputStream());
             JSONObject root = new JSONObject(body);
             return new Result(body, root.getString("title"));
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    static String redeemPairingCode(String code) throws Exception {
+        URL url = new URL(WidgetPrefs.DEFAULT_SERVER_URL + "/api/widget/pair");
+        HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
+        connection.setConnectTimeout(5_000);
+        connection.setReadTimeout(8_000);
+        connection.setRequestMethod("POST");
+        connection.setDoOutput(true);
+        connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+        connection.setRequestProperty("Accept", "application/json");
+        byte[] payload = new JSONObject().put("code", code).toString().getBytes(StandardCharsets.UTF_8);
+        try {
+            try (OutputStream output = connection.getOutputStream()) {
+                output.write(payload);
+            }
+            int status = connection.getResponseCode();
+            if (status != 200) {
+                throw new IOException(status == 410
+                        ? "Ссылка уже использована или устарела"
+                        : "Ошибка подключения: HTTP " + status);
+            }
+            JSONObject root = new JSONObject(readAll(connection.getInputStream()));
+            String serverUrl = root.getString("server_url");
+            String token = root.getString("token");
+            if (!WidgetPrefs.DEFAULT_SERVER_URL.equals(serverUrl) || token.length() < 32) {
+                throw new IOException("Сервер вернул некорректные настройки");
+            }
+            return token;
         } finally {
             connection.disconnect();
         }

@@ -129,6 +129,41 @@ func TestEditingButtonIsFeatureGated(t *testing.T) {
 	}
 }
 
+type fixedWidgetPairer struct{}
+
+func (fixedWidgetPairer) CreatePairingURL(int64) (string, time.Time, error) {
+	return "https://calendar.example/widget/setup?code=one-time", time.Date(2026, 10, 31, 15, 0, 0, 0, time.UTC), nil
+}
+
+func TestAuthorizedUserCanCreateWidgetPairingLink(t *testing.T) {
+	bot, store, calls := botFixture(t)
+	if err := store.BootstrapAdmin(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddUser(1, 2); err != nil {
+		t.Fatal(err)
+	}
+	bot.EnableWidgetPairing(fixedWidgetPairer{})
+	menu, _ := json.Marshal(mainMenu(false, false, true))
+	if !strings.Contains(string(menu), "Android-виджет") {
+		t.Fatalf("widget button missing: %s", menu)
+	}
+	q := CallbackQuery{ID: "q", From: User{ID: 2}, Message: Message{MessageID: 7, Chat: Chat{ID: 2, Type: "private"}}, Data: "widget:pair"}
+	if err := bot.handleCallback(context.Background(), q); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, call := range *calls {
+		encoded, _ := json.Marshal(call.body)
+		if strings.Contains(string(encoded), "calendar.example") && strings.Contains(string(encoded), "Подключить Family Calendar") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("calls=%+v", *calls)
+	}
+}
+
 func TestAuthorizedUserCanOpenCreation(t *testing.T) {
 	bot, store, calls := botFixture(t)
 	if err := store.BootstrapAdmin(1); err != nil {

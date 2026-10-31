@@ -102,7 +102,17 @@ func TestWidgetAPIRequiresLongToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !c.WidgetAPI.Enabled || c.WidgetAPI.ListenAddress != ":8080" {
+	if !c.WidgetAPI.Enabled || c.WidgetAPI.ListenAddress != ":8080" || c.WidgetAPI.PublicBaseURL != "https://usatenko-bf.com" || c.WidgetAPI.PairTTL.String() != "10m0s" {
 		t.Fatalf("%+v", c.WidgetAPI)
+	}
+}
+
+func TestWidgetAPIRejectsInsecurePublicURL(t *testing.T) {
+	validEnv(t)
+	t.Setenv("WIDGET_API_ENABLED", "true")
+	t.Setenv("WIDGET_API_TOKEN", strings.Repeat("a", 32))
+	t.Setenv("WIDGET_PUBLIC_BASE_URL", "http://example.com")
+	if _, err := Load(); err == nil {
+		t.Fatal("insecure widget public URL accepted")
 	}
 }

@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.usatenko.familycalendar",
+      "sha256_cert_fingerprints": [
+        "1F:94:3B:9A:19:87:CE:3A:3A:75:94:73:BB:E8:93:F8:97:24:98:77:A1:BE:17:66:58:38:28:39:A9:FA:A7:4D"
+      ]
+    }
+  }
+]

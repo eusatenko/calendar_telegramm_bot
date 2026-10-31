@@ -5,6 +5,10 @@ usatenko-bf.com {
 		reverse_proxy 127.0.0.1:18081
 	}
 
+	handle /widget/setup* {
+		reverse_proxy 127.0.0.1:18081
+	}
+
 	handle {
 		root * /var/www/usatenko-bf.com
 		file_server

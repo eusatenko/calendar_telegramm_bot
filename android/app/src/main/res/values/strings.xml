@@ -9,6 +9,10 @@
     <string name="https_required">Адрес должен начинаться с https://</string>
     <string name="token_too_short">Токен доступа слишком короткий</string>
     <string name="saved_updating">Сохранено. Виджеты обновляются…</string>
+    <string name="invalid_pairing_link">Некорректная ссылка подключения</string>
+    <string name="pairing_in_progress">Подключаем виджет…</string>
+    <string name="pairing_complete">Готово. Теперь добавьте виджет Family Calendar на главный экран.</string>
+    <string name="pairing_failed">Не удалось подключить виджет</string>
     <string name="widget_title">Семейное расписание</string>
     <string name="today">Сегодня</string>
     <string name="tomorrow">Завтра</string>

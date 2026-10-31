@@ -70,6 +70,8 @@ GOOGLE_CALENDAR_NASTYA_ID=
 WIDGET_API_ENABLED=false
 WIDGET_API_LISTEN_ADDRESS=:8080
 WIDGET_API_TOKEN=
+WIDGET_PUBLIC_BASE_URL=https://usatenko-bf.com
+WIDGET_PAIR_TTL=10m
 ```
 
 Все четыре URL обязаны быть HTTPS. `TIMEZONE` должен быть валидным IANA timezone. `.env` исключён из Git и Docker build context.
@@ -135,7 +137,9 @@ cd android
 ./gradlew :app:assembleDebug :app:lintDebug
 ```
 
-APK: `android/app/build/outputs/apk/debug/app-debug.apk`. После установки откройте Family Calendar, оставьте адрес `https://usatenko-bf.com`, вставьте `WIDGET_API_TOKEN`, сохраните и добавьте виджет на главный экран. Токен хранится в приватных данных приложения и исключён из cloud backup/device transfer.
+APK: `android/app/build/outputs/apk/debug/app-debug.apk`. После установки откройте личный чат с Telegram-ботом, нажмите `Android-виджет`, затем `Подключить Family Calendar`. Android App Link откроет приложение, которое обменяет одноразовый 256-битный код на настройки. Код действует 10 минут и удаляется при первом использовании. Постоянный API-токен не попадает в Telegram-ссылку.
+
+Если Android не открыл приложение сразу, fallback-страница покажет кнопку `Открыть приложение`. Токен хранится в приватных данных приложения и исключён из cloud backup/device transfer.
 
 ## 8. Локальная разработка и тесты
 

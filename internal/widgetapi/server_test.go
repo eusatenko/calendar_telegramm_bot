@@ -1,11 +1,13 @@
 package widgetapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,38 @@ type fakeSource struct{ events []calendar.Event }
 
 func (f fakeSource) Events(time.Time, time.Time) ([]calendar.Event, bool, error) {
 	return f.events, false, nil
+}
+
+func TestPairingEndpointsArePublicAndOneTime(t *testing.T) {
+	pairing := NewPairing(strings.Repeat("t", 64), "https://calendar.example", 10*time.Minute)
+	link, _, err := pairing.CreatePairingURL(42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, _ := url.Parse(link)
+	code := parsed.Query().Get("code")
+	s := &Server{token: strings.Repeat("x", 32), loc: time.UTC, log: slog.New(slog.NewTextHandler(io.Discard, nil)), now: time.Now, pairing: pairing}
+	h := s.handler()
+
+	setup := httptest.NewRecorder()
+	h.ServeHTTP(setup, httptest.NewRequest(http.MethodGet, "/widget/setup?code="+url.QueryEscape(code), nil))
+	if setup.Code != http.StatusOK || !strings.Contains(setup.Body.String(), "familycalendar://setup") {
+		t.Fatalf("setup status=%d body=%s", setup.Code, setup.Body.String())
+	}
+
+	body, _ := json.Marshal(map[string]string{"code": code})
+	exchange := func() *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		h.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/widget/pair", bytes.NewReader(body)))
+		return recorder
+	}
+	first := exchange()
+	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), `"server_url":"https://calendar.example"`) {
+		t.Fatalf("first status=%d body=%s", first.Code, first.Body.String())
+	}
+	if second := exchange(); second.Code != http.StatusGone {
+		t.Fatalf("second status=%d body=%s", second.Code, second.Body.String())
+	}
 }
 
 func TestScheduleRequiresTokenAndReturnsMergedRows(t *testing.T) {

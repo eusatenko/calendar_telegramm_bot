@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -23,6 +24,8 @@ type WidgetAPI struct {
 	Enabled       bool
 	ListenAddress string
 	Token         string
+	PublicBaseURL string
+	PairTTL       time.Duration
 }
 
 type Config struct {
@@ -118,10 +121,19 @@ func Load() (Config, error) {
 		Enabled:       widgetEnabled,
 		ListenAddress: value("WIDGET_API_LISTEN_ADDRESS", ":8080"),
 		Token:         os.Getenv("WIDGET_API_TOKEN"),
+		PublicBaseURL: value("WIDGET_PUBLIC_BASE_URL", "https://usatenko-bf.com"),
+	}
+	if c.WidgetAPI.PairTTL, err = duration("WIDGET_PAIR_TTL", 10*time.Minute); err != nil {
+		return Config{}, err
 	}
 	if c.WidgetAPI.Enabled && len(c.WidgetAPI.Token) < 32 {
 		return Config{}, fmt.Errorf("для WIDGET_API_ENABLED нужен WIDGET_API_TOKEN длиной не менее 32 символов")
 	}
+	publicURL, parseErr := url.Parse(c.WidgetAPI.PublicBaseURL)
+	if c.WidgetAPI.Enabled && (parseErr != nil || publicURL.Scheme != "https" || publicURL.Host == "" || publicURL.User != nil || publicURL.RawQuery != "" || publicURL.Fragment != "") {
+		return Config{}, fmt.Errorf("WIDGET_PUBLIC_BASE_URL должен быть валидным HTTPS URL")
+	}
+	c.WidgetAPI.PublicBaseURL = strings.TrimRight(c.WidgetAPI.PublicBaseURL, "/")
 	return c, nil
 }
 
