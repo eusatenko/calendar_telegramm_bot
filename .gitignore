@@ -5,3 +5,8 @@ data/
 *.db-wal
 .DS_Store
 coverage.out
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.jks

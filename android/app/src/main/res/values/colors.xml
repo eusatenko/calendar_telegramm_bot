@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="text_primary">#25242B</color>
+    <color name="text_secondary">#65636D</color>
+    <color name="error">#B3261E</color>
+</resources>

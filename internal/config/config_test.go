@@ -86,3 +86,23 @@ func TestGoogleCredentialsStayDisabledWithoutFeatureFlag(t *testing.T) {
 		t.Fatal("editing enabled without feature flag")
 	}
 }
+
+func TestWidgetAPIRequiresLongToken(t *testing.T) {
+	validEnv(t)
+	t.Setenv("WIDGET_API_ENABLED", "true")
+	t.Setenv("WIDGET_API_TOKEN", "short")
+	if _, err := Load(); err == nil {
+		t.Fatal("short widget API token accepted")
+	}
+
+	validEnv(t)
+	t.Setenv("WIDGET_API_ENABLED", "true")
+	t.Setenv("WIDGET_API_TOKEN", strings.Repeat("a", 32))
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.WidgetAPI.Enabled || c.WidgetAPI.ListenAddress != ":8080" {
+		t.Fatalf("%+v", c.WidgetAPI)
+	}
+}

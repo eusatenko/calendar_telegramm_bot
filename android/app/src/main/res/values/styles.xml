@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#6750A4</item>
+        <item name="android:navigationBarColor">#F7F7FC</item>
+    </style>
+
+    <style name="WidgetButton" parent="android:style/Widget.Material.Button.Borderless.Small">
+        <item name="android:layout_height">38dp</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">0dp</item>
+        <item name="android:paddingLeft">2dp</item>
+        <item name="android:paddingRight">2dp</item>
+        <item name="android:textColor">#4F378B</item>
+        <item name="android:textSize">11sp</item>
+    </style>
+</resources>

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -16,6 +17,7 @@ import (
 	"github.com/eusatenko/calendar_telegramm_bot/internal/schedule"
 	"github.com/eusatenko/calendar_telegramm_bot/internal/storage"
 	"github.com/eusatenko/calendar_telegramm_bot/internal/telegram"
+	"github.com/eusatenko/calendar_telegramm_bot/internal/widgetapi"
 )
 
 func main() {
@@ -37,6 +39,7 @@ func main() {
 	}
 	f := fetcher.New(cfg.HTTPTimeout)
 	people := make([]telegram.Person, 0, len(cfg.Calendars))
+	widgetPeople := make([]widgetapi.Person, 0, len(cfg.Calendars))
 	targets := make([]schedule.Target, 0, len(cfg.Calendars))
 	for _, cc := range cfg.Calendars {
 		c := cc
@@ -51,6 +54,7 @@ func main() {
 			return cal, e
 		})
 		people = append(people, telegram.Person{Key: c.Key, Name: c.Name, Source: src})
+		widgetPeople = append(widgetPeople, widgetapi.Person{Key: c.Key, Name: c.Name, Source: src})
 		if cfg.GoogleEditing.Enabled {
 			targets = append(targets, schedule.Target{Key: c.Key, Name: c.Name, CalendarID: c.GoogleID, Invalidate: src.Invalidate})
 		}
@@ -69,6 +73,29 @@ func main() {
 		writer := googleapi.New(googleapi.Credentials{ClientID: cfg.GoogleEditing.ClientID, ClientSecret: cfg.GoogleEditing.ClientSecret, RefreshToken: cfg.GoogleEditing.RefreshToken}, cfg.HTTPTimeout)
 		bot.EnableScheduleEditing(schedule.NewCoordinator(store, writer, targets))
 		log.Info("calendar editing enabled")
+	}
+	var widgetServer *http.Server
+	if cfg.WidgetAPI.Enabled {
+		widgetServer = &http.Server{
+			Addr:              cfg.WidgetAPI.ListenAddress,
+			Handler:           widgetapi.New(cfg.WidgetAPI.Token, widgetPeople, cfg.Timezone, log),
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       15 * time.Second,
+			WriteTimeout:      20 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		}
+		go func() {
+			log.Info("widget API started", "address", cfg.WidgetAPI.ListenAddress)
+			if serveErr := widgetServer.ListenAndServe(); serveErr != nil && serveErr != http.ErrServerClosed {
+				log.Error("widget API stopped", "error", serveErr)
+				stop()
+			}
+		}()
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = widgetServer.Shutdown(shutdownCtx)
+		}()
 	}
 	if err = bot.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Error("bot stopped", "error", err)

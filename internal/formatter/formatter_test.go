@@ -109,3 +109,16 @@ func TestCombinedChronologicalKeepsCalendarWarnings(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestCombinedRowsKeepsGroupingAndLocation(t *testing.T) {
+	d := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
+	start := d.Add(9 * time.Hour)
+	people := []PersonEvents{
+		{Name: "Аня", Events: []calendar.Event{{Summary: "Аня — Бассейн", Location: "Чайка", Start: start, End: start.Add(45 * time.Minute)}}},
+		{Name: "Лёша", Events: []calendar.Event{{Summary: "Лёша — Бассейн", Location: "Чайка", Start: start, End: start.Add(45 * time.Minute)}}},
+	}
+	rows := CombinedRows(d, people, "chronological")
+	if len(rows) != 1 || rows[0].Kind != "event" || rows[0].Location != "Чайка" || !strings.Contains(rows[0].Text, "Аня, 🟣 Лёша — Бассейн") {
+		t.Fatalf("%+v", rows)
+	}
+}

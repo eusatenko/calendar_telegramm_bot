@@ -19,6 +19,12 @@ type GoogleEditing struct {
 	RefreshToken string
 }
 
+type WidgetAPI struct {
+	Enabled       bool
+	ListenAddress string
+	Token         string
+}
+
 type Config struct {
 	BotToken      string
 	AdminID       int64
@@ -30,6 +36,7 @@ type Config struct {
 	InviteTTL     time.Duration
 	Calendars     []Calendar
 	GoogleEditing GoogleEditing
+	WidgetAPI     WidgetAPI
 }
 
 func Load() (Config, error) {
@@ -99,6 +106,21 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("для редактирования нужно задать все GOOGLE_OAUTH_* и GOOGLE_*_CALENDAR_ID")
 		}
 		c.GoogleEditing.Enabled = true
+	}
+	widgetEnabled := false
+	if raw := os.Getenv("WIDGET_API_ENABLED"); raw != "" {
+		widgetEnabled, err = strconv.ParseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("WIDGET_API_ENABLED должен быть true или false")
+		}
+	}
+	c.WidgetAPI = WidgetAPI{
+		Enabled:       widgetEnabled,
+		ListenAddress: value("WIDGET_API_LISTEN_ADDRESS", ":8080"),
+		Token:         os.Getenv("WIDGET_API_TOKEN"),
+	}
+	if c.WidgetAPI.Enabled && len(c.WidgetAPI.Token) < 32 {
+		return Config{}, fmt.Errorf("для WIDGET_API_ENABLED нужен WIDGET_API_TOKEN длиной не менее 32 символов")
 	}
 	return c, nil
 }

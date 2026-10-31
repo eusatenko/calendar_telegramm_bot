@@ -23,6 +23,7 @@
 - выбор произвольной даты при редактировании;
 - создание разовых и еженедельных событий сразу в одном или нескольких календарях;
 - отчёт об успехе по каждой копии и audit log.
+- нативный Android-виджет с режимами «Сегодня/Завтра» и «По времени/По людям».
 
 ## 1. Создание бота
 
@@ -64,6 +65,11 @@ GOOGLE_CALENDAR_ANYA_ID=
 GOOGLE_CALENDAR_LESHA_ID=
 GOOGLE_CALENDAR_SASHA_ID=
 GOOGLE_CALENDAR_NASTYA_ID=
+
+# Опционально: read-only API для Android-виджета
+WIDGET_API_ENABLED=false
+WIDGET_API_LISTEN_ADDRESS=:8080
+WIDGET_API_TOKEN=
 ```
 
 Все четыре URL обязаны быть HTTPS. `TIMEZONE` должен быть валидным IANA timezone. `.env` исключён из Git и Docker build context.
@@ -104,7 +110,34 @@ OAuth client secret и refresh token нельзя коммитить, печат
 
 Отключить уведомления может только администратор командой `/notifications_off`.
 
-## 7. Локальная разработка и тесты
+## 7. Android-виджет
+
+Проект находится в `android/`. Виджет не хранит Google OAuth/iCal-секреты и получает только готовое расписание через read-only HTTPS API. Поддерживаются:
+
+- сегодня и завтра;
+- хронологическая лента и группировка по людям;
+- объединение совпадающих событий тем же алгоритмом, что и в Telegram;
+- ручное обновление и системное обновление раз в 30 минут;
+- показ последнего успешного результата при временной ошибке сети.
+
+На сервере создайте отдельный случайный токен:
+
+```bash
+openssl rand -hex 32
+```
+
+Запишите его в `.env` как `WIDGET_API_TOKEN`, установите `WIDGET_API_ENABLED=true`. Порт контейнера публикуется только на `127.0.0.1:18081`; наружу API должен идти через HTTPS-маршрут `/api/widget/*` из `deploy/Caddyfile`. Не открывайте порт 18081 в firewall.
+
+Сборка debug APK (JDK 17 и Android SDK 36):
+
+```bash
+cd android
+./gradlew :app:assembleDebug :app:lintDebug
+```
+
+APK: `android/app/build/outputs/apk/debug/app-debug.apk`. После установки откройте Family Calendar, оставьте адрес `https://usatenko-bf.com`, вставьте `WIDGET_API_TOKEN`, сохраните и добавьте виджет на главный экран. Токен хранится в приватных данных приложения и исключён из cloud backup/device transfer.
+
+## 8. Локальная разработка и тесты
 
 Требуется Go 1.22+.
 
@@ -120,7 +153,7 @@ go test -race ./...
 go run ./cmd/bot
 ```
 
-## 8. Docker
+## 9. Docker
 
 ```bash
 mkdir -p data
@@ -131,7 +164,7 @@ docker compose logs -f --tail=100
 
 Образ собирается multi-stage и запускается как непривилегированный пользователь. SQLite сохраняется через `./data:/app/data`. `.env` не копируется в образ.
 
-## 9. VPS deployment
+## 10. VPS deployment
 
 Целевой каталог: `/opt/family-calendar-bot`.
 
@@ -157,7 +190,7 @@ docker compose up -d
 
 Webhook не нужен: бот использует long polling, поэтому входящий порт для приложения открывать не требуется.
 
-## 10. Управление доступом
+## 11. Управление доступом
 
 При старте `ADMIN_TELEGRAM_USER_ID` атомарно создаётся или восстанавливается как активный администратор. Неавторизованный пользователь получает только «Доступ не предоставлен».
 
@@ -172,11 +205,11 @@ Webhook не нужен: бот использует long polling, поэтом�
 
 Приглашение создаётся из 32 криптографически случайных байт. В SQLite хранится только SHA-256 hash. Применение, активация пользователя и отметка `used_at` выполняются в одной транзакции, поэтому параллельное повторное использование не проходит.
 
-## 11. Кеш
+## 12. Кеш
 
 Каждый календарь имеет отдельный parsed in-memory кеш. По умолчанию TTL — две минуты. Параллельные запросы объединяются в один refresh. При ошибке refresh используются последние успешные данные с предупреждением; при отсутствии кеша показывается короткая ошибка.
 
-## 12. Логи
+## 13. Логи
 
 ```bash
 docker compose logs --tail=200 bot
@@ -184,7 +217,7 @@ docker compose logs --tail=200 bot
 
 Логи содержат логическое имя календаря, операцию, длительность и ошибку. Токен Telegram, полный iCal URL и plaintext invite token не логируются.
 
-## 13. Backup и restore SQLite
+## 14. Backup и restore SQLite
 
 Остановите контейнер для согласованной файловой копии:
 
@@ -196,7 +229,7 @@ docker compose start bot
 
 Для восстановления остановите контейнер, сохраните текущую БД отдельно, скопируйте backup в `data/bot.db`, выставьте владельца каталога и запустите контейнер.
 
-## 14. Диагностика
+## 15. Диагностика
 
 - `configuration error`: проверьте обязательные переменные, числовой admin ID, IANA timezone и HTTPS URL.
 - `HTTP 403/404`: секретный адрес отозван или скопирован не полностью.
@@ -205,7 +238,7 @@ docker compose start bot
 - `database open failed`: проверьте права `/app/data` и свободное место.
 - бот не отвечает: `docker compose ps`, затем `docker compose logs --tail=200 bot`.
 
-## 15. Ротация секретов
+## 16. Ротация секретов
 
 - Telegram: `/revoke` в BotFather, заменить только `TELEGRAM_BOT_TOKEN` в production `.env`, перезапустить контейнер.
 - Calendar: сбросить secret iCal address в Google Calendar, заменить соответствующий `CALENDAR_*_ICAL_URL`, перезапустить контейнер.

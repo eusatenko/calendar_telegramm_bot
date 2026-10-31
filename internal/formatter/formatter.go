@@ -111,6 +111,85 @@ type PersonEvents struct {
 	Stale, Error bool
 }
 
+// ScheduleRow is a presentation-neutral row used by the Android widget API.
+// Kind is one of "header", "event", or "warning".
+type ScheduleRow struct {
+	Kind     string `json:"kind"`
+	Text     string `json:"text"`
+	Location string `json:"location,omitempty"`
+}
+
+// CombinedRows returns the same grouping used by the Telegram views, but as
+// structured rows suitable for a native widget.
+func CombinedRows(day time.Time, people []PersonEvents, mode string) []ScheduleRow {
+	groups, eventCounts := combinedGroups(day, people)
+	if mode == "chronological" {
+		groups = sortedCombinedGroups(groups, func(combinedGroup) bool { return true })
+		rows := make([]ScheduleRow, 0, len(groups)+len(people))
+		for _, group := range groups {
+			rows = append(rows, scheduleEventRow(day, group, true))
+		}
+		for _, person := range people {
+			if person.Error {
+				rows = append(rows, ScheduleRow{Kind: "warning", Text: "⚠️ " + personLabel(person.Name) + ": не удалось получить расписание."})
+			} else if person.Stale {
+				rows = append(rows, ScheduleRow{Kind: "warning", Text: "⚠️ " + personLabel(person.Name) + ": данные могут быть неактуальны."})
+			}
+		}
+		if len(rows) == 0 {
+			rows = append(rows, ScheduleRow{Kind: "event", Text: "Нет занятий"})
+		}
+		return rows
+	}
+
+	var rows []ScheduleRow
+	commonGroups := sortedCombinedGroups(groups, func(group combinedGroup) bool { return len(group.items) >= 3 })
+	previousParticipants := ""
+	for _, group := range commonGroups {
+		participants := combinedParticipantKey(group)
+		if participants != previousParticipants {
+			rows = append(rows, ScheduleRow{Kind: "header", Text: combinedGroupName(group)})
+			previousParticipants = participants
+		}
+		rows = append(rows, scheduleEventRow(day, group, false))
+	}
+	for personIndex, person := range people {
+		sectionGroups := sortedCombinedGroups(groups, func(group combinedGroup) bool {
+			return len(group.items) < 3 && group.anchor() == personIndex
+		})
+		if len(sectionGroups) == 0 && eventCounts[personIndex] > 0 && !person.Stale && !person.Error {
+			continue
+		}
+		rows = append(rows, ScheduleRow{Kind: "header", Text: combinedSectionName(person.Name, sectionGroups)})
+		if len(sectionGroups) == 0 && eventCounts[personIndex] == 0 {
+			rows = append(rows, ScheduleRow{Kind: "event", Text: "Нет занятий"})
+		} else {
+			for _, group := range sectionGroups {
+				rows = append(rows, scheduleEventRow(day, group, false))
+			}
+		}
+		if person.Error {
+			rows = append(rows, ScheduleRow{Kind: "warning", Text: "⚠️ Не удалось получить расписание."})
+		} else if person.Stale {
+			rows = append(rows, ScheduleRow{Kind: "warning", Text: "⚠️ Данные могут быть неактуальны."})
+		}
+	}
+	return rows
+}
+
+func scheduleEventRow(day time.Time, group combinedGroup, withMarkers bool) ScheduleRow {
+	locations := make([]string, 0, len(group.items))
+	seen := map[string]bool{}
+	for _, item := range group.items {
+		location := strings.TrimSpace(item.event.Location)
+		if location != "" && !seen[location] {
+			locations = append(locations, location)
+			seen[location] = true
+		}
+	}
+	return ScheduleRow{Kind: "event", Text: combinedLine(day, group, withMarkers), Location: strings.Join(locations, " / ")}
+}
+
 type combinedItem struct {
 	personIndex int
 	personName  string

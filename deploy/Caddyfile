@@ -1,7 +1,14 @@
 usatenko-bf.com {
-	root * /var/www/usatenko-bf.com
 	encode gzip
-	file_server
+
+	handle /api/widget/* {
+		reverse_proxy 127.0.0.1:18081
+	}
+
+	handle {
+		root * /var/www/usatenko-bf.com
+		file_server
+	}
 }
 
 tg.usatenko-bf.com {

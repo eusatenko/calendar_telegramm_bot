@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Family Calendar</string>
+    <string name="settings_title">Семейное расписание</string>
+    <string name="settings_description">Укажите HTTPS-адрес сервера и токен доступа. После сохранения добавьте виджет Family Calendar на главный экран.</string>
+    <string name="token_hint">Токен доступа</string>
+    <string name="save">Сохранить и обновить</string>
+    <string name="server_url_hint">https://usatenko-bf.com</string>
+    <string name="https_required">Адрес должен начинаться с https://</string>
+    <string name="token_too_short">Токен доступа слишком короткий</string>
+    <string name="saved_updating">Сохранено. Виджеты обновляются…</string>
+    <string name="widget_title">Семейное расписание</string>
+    <string name="today">Сегодня</string>
+    <string name="tomorrow">Завтра</string>
+    <string name="by_people">По людям</string>
+    <string name="refresh">↻</string>
+    <string name="no_data">Нет данных</string>
+</resources>
