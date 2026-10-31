@@ -6,6 +6,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Build;
 import android.view.View;
 import android.widget.RemoteViews;
 
@@ -30,7 +31,9 @@ final class WidgetUpdater {
                         message == null || message.trim().isEmpty() ? "Не удалось обновить" : message);
             }
             render(appContext, widgetId, false);
-            AppWidgetManager.getInstance(appContext).notifyAppWidgetViewDataChanged(widgetId, R.id.widget_list);
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                AppWidgetManager.getInstance(appContext).notifyAppWidgetViewDataChanged(widgetId, R.id.widget_list);
+            }
             if (finished != null) {
                 finished.run();
             }
@@ -61,10 +64,14 @@ final class WidgetUpdater {
         views.setOnClickPendingIntent(R.id.button_mode, action(context, widgetId, ScheduleWidgetProvider.ACTION_TOGGLE_MODE, 3));
         views.setOnClickPendingIntent(R.id.button_refresh, action(context, widgetId, ScheduleWidgetProvider.ACTION_REFRESH, 4));
 
-        Intent serviceIntent = new Intent(context, ScheduleRemoteViewsService.class);
-        serviceIntent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId);
-        serviceIntent.setData(Uri.parse(serviceIntent.toUri(Intent.URI_INTENT_SCHEME)));
-        views.setRemoteAdapter(R.id.widget_list, serviceIntent);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            setDirectCollection(context, widgetId, views);
+        } else {
+            Intent serviceIntent = new Intent(context, ScheduleRemoteViewsService.class);
+            serviceIntent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId);
+            serviceIntent.setData(Uri.parse(serviceIntent.toUri(Intent.URI_INTENT_SCHEME)));
+            views.setRemoteAdapter(R.id.widget_list, serviceIntent);
+        }
         views.setEmptyView(R.id.widget_list, R.id.widget_empty);
 
         String error = WidgetPrefs.error(context, widgetId);
@@ -74,6 +81,19 @@ final class WidgetUpdater {
         views.setTextViewText(R.id.widget_error, loading ? "Обновление…" : error);
         views.setViewVisibility(R.id.widget_error, loading || !error.isEmpty() ? View.VISIBLE : View.GONE);
         manager.updateAppWidget(widgetId, views);
+    }
+
+    @android.annotation.SuppressLint("NewApi") // Caller guards this with SDK_INT >= S.
+    private static void setDirectCollection(Context context, int widgetId, RemoteViews views) {
+        RemoteViews.RemoteCollectionItems.Builder items = new RemoteViews.RemoteCollectionItems.Builder()
+                .setViewTypeCount(2);
+        java.util.List<ScheduleRows.Row> rows = ScheduleRows.read(context, widgetId);
+        for (int position = 0; position < rows.size(); position++) {
+            ScheduleRows.Row row = rows.get(position);
+            long id = ((long) row.text.hashCode() << 32) ^ position;
+            items.addItem(id, ScheduleRows.remoteView(context, row));
+        }
+        views.setRemoteAdapter(R.id.widget_list, items.build());
     }
 
     private static PendingIntent action(Context context, int widgetId, String action, int offset) {
