@@ -4,6 +4,7 @@ import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProvider;
 import android.content.Context;
 import android.content.Intent;
+import android.os.Bundle;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -28,6 +29,12 @@ public final class ScheduleWidgetProvider extends AppWidgetProvider {
                 }
             });
         }
+    }
+
+    @Override
+    public void onAppWidgetOptionsChanged(Context context, AppWidgetManager manager,
+                                          int widgetId, Bundle newOptions) {
+        WidgetUpdater.render(context, widgetId, false);
     }
 
     @Override
