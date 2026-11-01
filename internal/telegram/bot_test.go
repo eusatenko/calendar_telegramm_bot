@@ -145,7 +145,7 @@ func TestAuthorizedUserCanCreateWidgetPairingLink(t *testing.T) {
 	}
 	bot.EnableWidgetPairing(fixedWidgetPairer{})
 	menu, _ := json.Marshal(mainMenu(false, false, true))
-	if !strings.Contains(string(menu), "Первый вход") || !strings.Contains(string(menu), "Скачать приложение") || !strings.Contains(string(menu), "family-calendar-1.3.0.apk") {
+	if !strings.Contains(string(menu), "Первый вход") || !strings.Contains(string(menu), "Скачать приложение") || !strings.Contains(string(menu), "family-calendar-1.3.1.apk") {
 		t.Fatalf("widget button missing: %s", menu)
 	}
 	widgetRow := mainMenu(false, false, true).InlineKeyboard[4]
