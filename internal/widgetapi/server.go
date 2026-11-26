@@ -130,9 +130,13 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	from, to := calendar.DayRange(s.now(), s.loc, offset)
-	items := make([]formatter.PersonEvents, len(s.people))
+	s.writeSchedule(w, from, to, title, mode, s.people)
+}
+
+func (s *Server) writeSchedule(w http.ResponseWriter, from, to time.Time, title, mode string, people []Person) {
+	items := make([]formatter.PersonEvents, len(people))
 	var queries sync.WaitGroup
-	for index, person := range s.people {
+	for index, person := range people {
 		queries.Add(1)
 		go func() {
 			defer queries.Done()

@@ -1,6 +1,10 @@
 usatenko-bf.com {
 	encode gzip
 
+	handle /calendar/* {
+		reverse_proxy 127.0.0.1:18081
+	}
+
 	handle /api/widget/* {
 		reverse_proxy 127.0.0.1:18081
 	}

@@ -745,3 +745,17 @@ func TestEmptyMarkupIsSerializedAsTelegramArray(t *testing.T) {
 		t.Fatalf("inline_keyboard=%#v", replyMarkup["inline_keyboard"])
 	}
 }
+func TestMiniAppEntryForMembersAndAdmins(t *testing.T) {
+	b := &Bot{username: "FamilyBot"}
+	b.EnableMiniApp("https://example.org/calendar/")
+	for _, admin := range []bool{false, true} {
+		private := b.menu(admin, Chat{Type: "private"}).InlineKeyboard[0][0]
+		group := b.menu(admin, Chat{Type: "supergroup"}).InlineKeyboard[0][0]
+		if private.Text != "Открыть календарь" || private.WebApp == nil || private.WebApp.URL != b.calendarURL || private.URL != "" {
+			t.Fatalf("private: %+v", private)
+		}
+		if group.WebApp != nil || group.URL != "https://t.me/FamilyBot?start=calendar" {
+			t.Fatalf("group: %+v", group)
+		}
+	}
+}

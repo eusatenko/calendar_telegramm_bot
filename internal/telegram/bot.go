@@ -71,6 +71,7 @@ type Bot struct {
 	editSessions   map[string]editSession
 	createSessions map[string]createSession
 	widgetPairer   WidgetPairer
+	calendarURL    string
 }
 
 func NewBot(client *Client, store *storage.Store, people []Person, loc *time.Location, inviteTTL time.Duration, username string, log *slog.Logger) *Bot {
@@ -85,6 +86,21 @@ func NewBot(client *Client, store *storage.Store, people []Person, loc *time.Loc
 
 func (b *Bot) EnableScheduleEditing(editor ScheduleEditor) { b.editor = editor }
 func (b *Bot) EnableWidgetPairing(pairer WidgetPairer)     { b.widgetPairer = pairer }
+func (b *Bot) EnableMiniApp(calendarURL string)            { b.calendarURL = calendarURL }
+
+func (b *Bot) menu(admin bool, chat Chat) Markup {
+	menu := mainMenu(admin, b.editor != nil, b.widgetPairer != nil)
+	if b.calendarURL != "" {
+		button := Button{Text: "Открыть календарь"}
+		if chat.Type == "private" {
+			button.WebApp = &WebAppInfo{URL: b.calendarURL}
+		} else {
+			button.URL = "https://t.me/" + b.username + "?start=calendar"
+		}
+		menu.InlineKeyboard = append([][]Button{{button}}, menu.InlineKeyboard...)
+	}
+	return menu
+}
 
 func (b *Bot) Run(ctx context.Context) error {
 	offset := 0
@@ -130,7 +146,7 @@ func (b *Bot) handleMessage(ctx context.Context, m Message) error {
 		if err := b.store.RedeemInvite(token, m.From.ID, m.From.Username, m.From.FirstName); err != nil {
 			return b.client.Send(ctx, m.Chat.ID, "Приглашение недействительно, просрочено или уже использовано.", Markup{})
 		}
-		return b.client.Send(ctx, m.Chat.ID, "Доступ предоставлен.", mainMenu(false, b.editor != nil, b.widgetPairer != nil))
+		return b.client.Send(ctx, m.Chat.ID, "Доступ предоставлен.", b.menu(false, m.Chat))
 	}
 	authorized, admin, err := b.store.Authorized(m.From.ID)
 	if err != nil {
@@ -140,6 +156,9 @@ func (b *Bot) handleMessage(ctx context.Context, m Message) error {
 		return b.client.Send(ctx, m.Chat.ID, "Доступ не предоставлен.", Markup{})
 	}
 	_ = b.store.Touch(m.From.ID, m.From.Username, m.From.FirstName)
+	if m.Text == "/start calendar" && m.Chat.Type == "private" && b.calendarURL != "" {
+		return b.client.Send(ctx, m.Chat.ID, "Семейный календарь", b.menu(admin, m.Chat))
+	}
 	if command := botCommand(m.Text, b.username); command == "notifications_here" {
 		if !admin {
 			return b.client.Send(ctx, m.Chat.ID, "Недостаточно прав.", Markup{})
@@ -165,7 +184,7 @@ func (b *Bot) handleMessage(ctx context.Context, m Message) error {
 		if admin {
 			return b.client.Send(ctx, m.Chat.ID, "Действие отменено.", adminMenu())
 		}
-		return b.client.Send(ctx, m.Chat.ID, "Действие отменено.", mainMenu(false, b.editor != nil, b.widgetPairer != nil))
+		return b.client.Send(ctx, m.Chat.ID, "Действие отменено.", b.menu(false, m.Chat))
 	}
 	if state, ok := b.awaitingState(m.From.ID); ok {
 		if strings.HasPrefix(state.kind, "edit_") {
@@ -178,14 +197,14 @@ func (b *Bot) handleMessage(ctx context.Context, m Message) error {
 			return b.handleAllDateInput(ctx, m)
 		}
 		if !admin {
-			return b.client.Send(ctx, m.Chat.ID, "Недостаточно прав.", mainMenu(false, b.editor != nil, b.widgetPairer != nil))
+			return b.client.Send(ctx, m.Chat.ID, "Недостаточно прав.", b.menu(false, m.Chat))
 		}
 		id, e := strconv.ParseInt(strings.TrimSpace(m.Text), 10, 64)
 		if e != nil || id <= 0 {
 			return b.client.Send(ctx, m.Chat.ID, "Нужен положительный числовой Telegram ID. Отправьте /cancel для отмены.", cancelMenu())
 		}
 		if e = b.store.RequireAdmin(ctx, m.From.ID); e != nil {
-			return b.client.Send(ctx, m.Chat.ID, "Недостаточно прав.", mainMenu(false, b.editor != nil, b.widgetPairer != nil))
+			return b.client.Send(ctx, m.Chat.ID, "Недостаточно прав.", b.menu(false, m.Chat))
 		}
 		if e = b.store.AddUser(m.From.ID, id); e != nil {
 			return e
@@ -193,7 +212,7 @@ func (b *Bot) handleMessage(ctx context.Context, m Message) error {
 		b.clearAwaiting(m.From.ID)
 		return b.client.Send(ctx, m.Chat.ID, fmt.Sprintf("Пользователь %d добавлен или активирован.", id), adminMenu())
 	}
-	return b.client.Send(ctx, m.Chat.ID, "Семейное расписание", mainMenu(admin, b.editor != nil, b.widgetPairer != nil))
+	return b.client.Send(ctx, m.Chat.ID, "Семейное расписание", b.menu(admin, m.Chat))
 }
 func (b *Bot) handleCallback(ctx context.Context, q CallbackQuery) error {
 	defer func() { _ = b.client.Answer(context.Background(), q.ID, "") }()
@@ -211,7 +230,7 @@ func (b *Bot) handleCallback(ctx context.Context, q CallbackQuery) error {
 			return b.invalid(ctx, q)
 		}
 		b.clearAwaiting(q.From.ID)
-		return b.edit(ctx, q, "Семейное расписание", mainMenu(admin, b.editor != nil, b.widgetPairer != nil))
+		return b.edit(ctx, q, "Семейное расписание", b.menu(admin, q.Message.Chat))
 	case "person":
 		if len(parts) == 2 {
 			if _, ok := b.people[parts[1]]; !ok {

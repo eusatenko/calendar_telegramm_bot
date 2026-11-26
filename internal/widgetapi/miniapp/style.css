@@ -1,0 +1,17 @@
+:root { color-scheme: light dark; font: 16px/1.45 system-ui,sans-serif; color:var(--tg-theme-text-color,CanvasText); background:var(--tg-theme-secondary-bg-color,Canvas) }
+* { box-sizing:border-box }
+body { margin:0 }
+main { max-width:42rem; margin:auto; padding:1rem 1rem max(2rem,env(safe-area-inset-bottom)) }
+h1 { font-size:1.45rem; margin:.5rem 0 1rem }
+.dates,.filters { display:grid; gap:.5rem; margin-bottom:.65rem }
+.dates { grid-template-columns:3rem minmax(0,1fr) 3rem }
+.filters { grid-template-columns:1fr 1fr }
+#week { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:3px; margin-bottom:.65rem }
+#week button { padding:.35rem 0; font-size:.85rem; white-space:pre-line }
+#week [aria-current=date] { background:var(--tg-theme-button-color,#514378); color:var(--tg-theme-button-text-color,white) }
+button,input,select { min-width:0; padding:.55rem; min-height:44px; font:inherit; color:inherit; border:1px solid var(--tg-theme-hint-color,GrayText); border-radius:.7rem; background:var(--tg-theme-bg-color,Canvas) }
+.dates button { font-size:1.4rem; line-height:1 }
+input { text-align:center }
+h2 { font-size:1rem; margin:1.2rem 0 .4rem }
+article { padding:.8rem 1rem; margin:.4rem 0; border-radius:.75rem; background:var(--tg-theme-section-bg-color,var(--tg-theme-bg-color,Canvas)); overflow-wrap:anywhere }
+small { display:block; margin-top:.2rem; color:var(--tg-theme-subtitle-text-color,GrayText) }

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Семейный календарь</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
+  <script src="./app.js" defer></script>
+</head>
+<body><main>
+  <h1>Семейный календарь</h1>
+  <section id="controls" hidden aria-label="Параметры расписания">
+    <div class="dates"><button id="prev" aria-label="Предыдущий день">‹</button>
+      <input type="date" id="date" aria-label="Дата расписания">
+      <button id="next" aria-label="Следующий день">›</button>
+    </div>
+    <nav id="week" aria-label="Дни недели"></nav>
+    <div class="filters">
+      <select id="person" aria-label="Участник"><option value="">Вся семья</option><option value="anya">Аня</option><option value="lesha">Лёша</option><option value="sasha">Саша</option><option value="nastya">Настя</option></select>
+      <select id="mode" aria-label="Порядок событий"><option value="chronological">По времени</option><option value="people">По людям</option></select>
+    </div>
+  </section>
+  <p id="status" role="status">Загрузка расписания…</p>
+  <button id="retry" hidden>Повторить</button>
+  <section id="rows" aria-label="Расписание"></section>
+</main></body></html>

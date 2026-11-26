@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -81,9 +82,14 @@ func main() {
 	}
 	var widgetServer *http.Server
 	if cfg.WidgetAPI.Enabled {
+		botID, _, _ := strings.Cut(cfg.BotToken, ":")
+		bot.EnableMiniApp(cfg.WidgetAPI.PublicBaseURL + "/calendar/")
+		mux := http.NewServeMux()
+		mux.Handle("/calendar/", widgetapi.NewMiniApp(botID, store.Authorized, widgetPeople, cfg.Timezone, log))
+		mux.Handle("/", widgetapi.New(cfg.WidgetAPI.Token, widgetPeople, cfg.Timezone, log, widgetPairing))
 		widgetServer = &http.Server{
 			Addr:              cfg.WidgetAPI.ListenAddress,
-			Handler:           widgetapi.New(cfg.WidgetAPI.Token, widgetPeople, cfg.Timezone, log, widgetPairing),
+			Handler:           mux,
 			ReadHeaderTimeout: 5 * time.Second,
 			ReadTimeout:       15 * time.Second,
 			WriteTimeout:      20 * time.Second,
